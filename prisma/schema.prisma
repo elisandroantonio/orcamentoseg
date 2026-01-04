@@ -1,0 +1,45 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Input {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  description String
+  unit        String
+  cost        Float
+  class       String   // Material | Mão de Obra | Equipamento
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       CompositionItem[]
+}
+
+model Composition {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  description String
+  unit        String
+  group       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       CompositionItem[]
+}
+
+model CompositionItem {
+  id            Int @id @default(autoincrement())
+  compositionId Int
+  inputId       Int
+  coefficient   Float
+
+  composition   Composition @relation(fields: [compositionId], references: [id], onDelete: Cascade)
+  input         Input       @relation(fields: [inputId], references: [id], onDelete: Restrict)
+
+  @@unique([compositionId, inputId])
+}
