@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1776352459394,
+      "tag": "0000_melodic_red_shift",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1776356684304,
+      "tag": "0001_wise_ronan",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1776788038424,
+      "tag": "0002_furry_sleeper",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1776908603431,
+      "tag": "0003_cool_puppet_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1777819912499,
+      "tag": "0004_last_northstar",
+      "breakpoints": true
+    }
+  ]
+}

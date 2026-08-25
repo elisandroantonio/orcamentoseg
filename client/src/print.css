@@ -1,0 +1,91 @@
+/* Estilos específicos para impressão */
+@media print {
+  /* Ocultar elementos de navegação */
+  .print\\:hidden {
+    display: none !important;
+  }
+
+  /* Mostrar elementos apenas na impressão */
+  .hidden.print\\:block {
+    display: block !important;
+  }
+
+  /* Configurações gerais de página */
+  @page {
+    margin: 2cm;
+    size: A4 portrait;
+  }
+
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* Evitar quebras de página indesejadas */
+  .print\\:break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Forçar quebra de página antes */
+  .print\\:break-before {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* Remover sombras e bordas desnecessárias */
+  .shadow,
+  .shadow-sm,
+  .shadow-md,
+  .shadow-lg {
+    box-shadow: none !important;
+  }
+
+  /* Garantir que cores de fundo sejam impressas */
+  .bg-slate-100,
+  .bg-slate-800,
+  .dark\\:bg-slate-800 {
+    background-color: #f1f5f9 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Otimizar fontes para impressão */
+  body {
+    font-size: 11pt;
+    line-height: 1.4;
+  }
+
+  h1 {
+    font-size: 20pt;
+  }
+
+  h2 {
+    font-size: 16pt;
+  }
+
+  h3,
+  h4 {
+    font-size: 13pt;
+  }
+
+  /* Evitar quebra de página em elementos importantes */
+  .card,
+  .budget-stage,
+  .budget-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Remover interatividade */
+  button,
+  a {
+    pointer-events: none;
+  }
+
+  /* Garantir que links não sejam sublinhados */
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
+}
