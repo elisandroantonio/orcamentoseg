@@ -1213,6 +1213,7 @@ export default function BudgetGantt() {
           <GanttChart
             tasks={ganttTasks}
             onDateChange={handleDateChange}
+            exportTitle={budget?.project?.name || "Orçamento"}
           />
         </CardContent>
       </Card>
