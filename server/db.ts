@@ -476,6 +476,71 @@ export async function recalculateItemTotalCost(budgetItemId: number) {
   }
 }
 
+/**
+ * Corrige o campo `order` de todas as etapas/sub-etapas de um orçamento,
+ * renumerando em pré-ordem de árvore: cada etapa raiz na sequência relativa
+ * atual, seguida imediatamente de suas próprias sub-etapas (também na
+ * sequência relativa atual), antes de passar pra próxima raiz.
+ *
+ * Existe porque `order` é um contador global (não reinicia por sub-etapa) e
+ * fica sujeito a inconsistência de leitura logo após vários INSERTs seguidos
+ * (ex: o SELECT MAX(order) usado ao criar uma etapa não enxergar ainda
+ * sub-etapas recém-criadas de outra etapa raiz) — o que podia fazer uma
+ * etapa nova aparecer visualmente antes de sub-etapas de uma etapa raiz já
+ * existente, mesmo tendo sido criada depois. Chamada automaticamente ao
+ * final de createStage, então não depende do usuário clicar em
+ * "Reorganizar Etapas" pra corrigir isso na hora.
+ */
+export async function normalizeStageOrder(budgetId: number): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  const allStages = await database
+    .select({ id: budgetStages.id, parentStageId: budgetStages.parentStageId, order: budgetStages.order })
+    .from(budgetStages)
+    .where(eq(budgetStages.budgetId, budgetId));
+
+  const byParent = new Map<number | null, typeof allStages>();
+  for (const s of allStages) {
+    const key = s.parentStageId ?? null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(s);
+  }
+  for (const arr of Array.from(byParent.values())) {
+    arr.sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id);
+  }
+  const canonicalOrder: { id: number; order: number }[] = [];
+  const visited = new Set<number>();
+  const walk = (parentId: number | null) => {
+    for (const child of byParent.get(parentId) || []) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      canonicalOrder.push({ id: child.id, order: canonicalOrder.length });
+      walk(child.id);
+    }
+  };
+  walk(null);
+  for (const s of allStages) {
+    if (!visited.has(s.id)) canonicalOrder.push({ id: s.id, order: canonicalOrder.length });
+  }
+
+  const changed = canonicalOrder.filter((c) => {
+    const original = allStages.find((s) => s.id === c.id);
+    return original && original.order !== c.order;
+  });
+  if (changed.length === 0) return;
+
+  const caseSql = changed.map(() => `WHEN ? THEN ?`).join(' ');
+  const caseParams: any[] = [];
+  for (const c of changed) caseParams.push(c.id, c.order);
+  const ids = changed.map((c) => c.id);
+  const inSql = ids.map(() => '?').join(',');
+  await rawQuery(
+    `UPDATE budget_stages SET \`order\` = CASE id ${caseSql} END WHERE id IN (${inSql})`,
+    [...caseParams, ...ids]
+  );
+}
+
 export async function recalculateBudgetTotals(
   budgetId: number,
   options?: { skipItemCostRecalc?: boolean }
