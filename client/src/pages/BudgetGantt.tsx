@@ -1017,8 +1017,9 @@ export default function BudgetGantt() {
                 variant="default"
                 size="sm"
                 disabled={reloadStagesMutation.isPending || stages.filter((s: any) => s.startDate && s.endDate).length === 0}
+                title="Recalcula datas de sucessoras e corrige a ordem de exibição das etapas/sub-etapas"
               >
-                {reloadStagesMutation.isPending ? "Rearranjando..." : "Reload"}
+                {reloadStagesMutation.isPending ? "Rearranjando..." : "Reorganizar Etapas"}
               </Button>
               <Button
                 onClick={handleRecalculateAllDistributions}

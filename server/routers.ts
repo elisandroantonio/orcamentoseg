@@ -3569,7 +3569,66 @@ export const appRouter = router({
         // Deletar todas as distribuições existentes para forçar recalculo
         await database.delete(budgetMonthlyDistribution)
           .where(eq(budgetMonthlyDistribution.budgetId, input.budgetId));
-        
+
+        // Corrigir a ordem de exibição das etapas (independente das datas).
+        // O campo `order` é um contador global (não reinicia por sub-etapa),
+        // então uma etapa raiz nova pode acabar com um número de `order`
+        // menor que sub-etapas de uma etapa raiz mais antiga se, em algum
+        // momento (ex: orçamento criado com etapas ainda locais, antes do
+        // 1º salvamento), a numeração tiver sido atribuída fora de
+        // sequência — o que fazia a etapa nova aparecer visualmente antes
+        // de etapas já lançadas, mesmo sem nenhuma delas ter mudado de
+        // lugar de propósito. Aqui a ordem é renumerada respeitando a
+        // árvore: cada etapa raiz na sequência atual, seguida imediatamente
+        // de suas sub-etapas (também na sequência atual), antes de passar
+        // pra próxima raiz — sem alterar quais etapas são pai/filha de
+        // quem, só a numeração usada pra exibição.
+        const allStages = await database
+          .select({ id: budgetStages.id, parentStageId: budgetStages.parentStageId, order: budgetStages.order })
+          .from(budgetStages)
+          .where(eq(budgetStages.budgetId, input.budgetId));
+
+        const byParent = new Map<number | null, typeof allStages>();
+        for (const s of allStages) {
+          const key = s.parentStageId ?? null;
+          if (!byParent.has(key)) byParent.set(key, []);
+          byParent.get(key)!.push(s);
+        }
+        for (const arr of Array.from(byParent.values())) {
+          arr.sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id);
+        }
+        const canonicalOrder: { id: number; order: number }[] = [];
+        const visitedIds = new Set<number>();
+        const walkTree = (parentId: number | null) => {
+          for (const child of byParent.get(parentId) || []) {
+            if (visitedIds.has(child.id)) continue;
+            visitedIds.add(child.id);
+            canonicalOrder.push({ id: child.id, order: canonicalOrder.length });
+            walkTree(child.id);
+          }
+        };
+        walkTree(null);
+        // Órfãs (parentStageId aponta pra algo fora do orçamento) — inclui no final.
+        for (const s of allStages) {
+          if (!visitedIds.has(s.id)) canonicalOrder.push({ id: s.id, order: canonicalOrder.length });
+        }
+
+        const changedOrder = canonicalOrder.filter((c) => {
+          const original = allStages.find((s) => s.id === c.id);
+          return original && original.order !== c.order;
+        });
+        if (changedOrder.length > 0) {
+          const caseSql = changedOrder.map(() => `WHEN ? THEN ?`).join(' ');
+          const caseParams: any[] = [];
+          for (const c of changedOrder) caseParams.push(c.id, c.order);
+          const ids = changedOrder.map((c) => c.id);
+          const inSql = ids.map(() => '?').join(',');
+          await db.rawQuery(
+            `UPDATE budget_stages SET \`order\` = CASE id ${caseSql} END WHERE id IN (${inSql})`,
+            [...caseParams, ...ids]
+          );
+        }
+
         return { success: true, count: stages.length };
       }),
   }),
