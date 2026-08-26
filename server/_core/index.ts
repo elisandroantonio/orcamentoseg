@@ -120,6 +120,21 @@ async function runSafeMigrations() {
     )`);
     console.log('[Migration] cub_sc_values table ensured');
 
+    // Regras de mesclagem manual de materiais na Lista de Materiais
+    // (aba Resumo Geral) — ver comentário em drizzle/schema.ts.
+    await rawQuery(`CREATE TABLE IF NOT EXISTS material_merge_rules (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      userId INT NOT NULL,
+      sourceKey VARCHAR(300) NOT NULL,
+      targetKey VARCHAR(300) NOT NULL,
+      targetDescription TEXT,
+      targetUnit VARCHAR(20),
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      INDEX material_merge_rules_userId_idx (userId),
+      UNIQUE KEY material_merge_rules_user_source_uq (userId, sourceKey)
+    )`);
+    console.log('[Migration] material_merge_rules table ensured');
+
   } catch (err: any) {
     console.warn('[Migration] Safe migration warning:', err?.message || err);
   }

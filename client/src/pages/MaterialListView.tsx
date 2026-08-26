@@ -43,6 +43,103 @@ const fmt = (v: number | string) =>
 const fmtQty = (v: number | string) =>
   Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
+// Remove acento, uppercase, colapsa espaços — usado pra chave de agrupamento,
+// categorização e comparação de similaridade (tudo que precisa comparar
+// texto ignorando grafia).
+const normalizeText = (s: string) =>
+  (s || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+// ── Categorização de materiais (aba Resumo Geral) ───────────────────────
+// Classifica pela descrição, por palavra-chave, pra organizar a lista de
+// compra em seções — como numa loja de material de construção. Palavras
+// curtas/ambíguas ("CAL", "AÇO", "PVC"...) exigem bater a palavra inteira
+// (exact) pra não confundir com "CALHA", "ESPAÇO" etc.
+interface MaterialKeyword { text: string; exact?: boolean }
+const MATERIAL_CATEGORIES: { name: string; keywords: MaterialKeyword[] }[] = [
+  { name: "Cimento e Argamassa", keywords: [
+    { text: "CIMENTO" }, { text: "ARGAMASSA" }, { text: "CAL HIDRATADA" }, { text: "CAL VIRGEM" },
+    { text: "ADITIVO" }, { text: "REJUNTE" }, { text: "CAL", exact: true },
+  ]},
+  { name: "Agregados", keywords: [
+    { text: "AREIA" }, { text: "BRITA" }, { text: "PEDRISCO" }, { text: "CASCALHO" }, { text: "SEIXO" }, { text: "RACHAO" },
+  ]},
+  { name: "Aço e Ferragem", keywords: [
+    { text: "ACO", exact: true }, { text: "VERGALHAO" }, { text: "ARAME" }, { text: "PREGO" },
+    { text: "PARAFUSO" }, { text: "TELA SOLDADA" }, { text: "ESTRIBO" }, { text: "FERRAGEM" },
+  ]},
+  { name: "Alvenaria e Revestimento", keywords: [
+    { text: "TIJOLO" }, { text: "BLOCO" }, { text: "TELHA" }, { text: "CERAMIC" }, { text: "PORCELANATO" },
+    { text: "AZULEJO" }, { text: "PISO" }, { text: "REVESTIMENTO" }, { text: "CONTRAPISO" },
+  ]},
+  { name: "Madeira", keywords: [
+    { text: "MADEIRA" }, { text: "COMPENSADO" }, { text: "SARRAFO" }, { text: "CAIBRO" }, { text: "TABUA" },
+  ]},
+  { name: "Elétrica", keywords: [
+    { text: "ELETRIC" }, { text: "CABO" }, { text: "DISJUNTOR" }, { text: "ELETRODUTO" }, { text: "TOMADA" },
+    { text: "INTERRUPTOR" }, { text: "LUMINARIA" }, { text: "FIO", exact: true },
+  ]},
+  { name: "Hidráulica", keywords: [
+    { text: "HIDRAULIC" }, { text: "TUBO" }, { text: "CANO", exact: true }, { text: "PVC", exact: true },
+    { text: "CONEXAO" }, { text: "REGISTRO" }, { text: "VALVULA" }, { text: "CAIXA DAGUA" },
+  ]},
+  { name: "Tintas e Acabamento", keywords: [
+    { text: "TINTA" }, { text: "VERNIZ" }, { text: "MASSA CORRIDA" }, { text: "SELADOR" }, { text: "TEXTURA" },
+  ]},
+  { name: "Esquadrias e Vidros", keywords: [
+    { text: "ESQUADRIA" }, { text: "JANELA" }, { text: "VIDRO" }, { text: "BATENTE" }, { text: "PORTA", exact: true },
+  ]},
+  { name: "Impermeabilização", keywords: [
+    { text: "IMPERMEABILIZ" }, { text: "MANTA ASFALTICA" },
+  ]},
+];
+const OUTROS_CATEGORY = "Outros";
+
+function categorizeMaterial(description: string): string {
+  const desc = normalizeText(description);
+  for (const cat of MATERIAL_CATEGORIES) {
+    for (const kw of cat.keywords) {
+      const pattern = kw.exact ? `\\b${kw.text}\\b` : `\\b${kw.text}`;
+      if (new RegExp(pattern).test(desc)) return cat.name;
+    }
+  }
+  return OUTROS_CATEGORY;
+}
+
+// ── Arredondamento pra unidade de compra ────────────────────────────────
+// Só cimento por enquanto (saco de 50kg é praticamente padrão nacional).
+// Outros materiais (cal, argamassa industrializada etc.) têm tamanho de
+// embalagem variável — evitar chutar até confirmar o tamanho real usado.
+interface PackagingRule { keyword: string; unit: string; packageSize: number; packageLabel: string }
+const PACKAGING_RULES: PackagingRule[] = [
+  { keyword: "CIMENTO", unit: "KG", packageSize: 50, packageLabel: "sacos de 50kg" },
+];
+
+function suggestPurchaseUnit(description: string, unit: string, quantity: number): string | null {
+  const desc = normalizeText(description);
+  const normUnit = normalizeText(unit);
+  const rule = PACKAGING_RULES.find((r) => r.unit === normUnit && new RegExp(`\\b${r.keyword}`).test(desc));
+  if (!rule || quantity <= 0) return null;
+  const packages = Math.ceil(quantity / rule.packageSize);
+  return `${packages} ${rule.packageLabel}`;
+}
+
+// ── Similaridade de descrição (assistente de mesclagem) ─────────────────
+function wordSet(description: string): Set<string> {
+  return new Set(normalizeText(description).split(" ").filter((w) => w.length > 2));
+}
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const w of Array.from(a)) if (b.has(w)) intersection++;
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
 interface EditItemForm {
   id: number;
   description: string;
@@ -203,6 +300,24 @@ export default function MaterialListView({ params }: { params: { id: string } })
     }));
   }, [list, search, typeFilter]);
 
+  // Regras de mesclagem manual (assistente de duplicados) — valem pra
+  // qualquer lista do usuário, não só esta.
+  const { data: mergeRules = [] } = trpc.materialMergeRules.list.useQuery();
+  const createMergeRule = trpc.materialMergeRules.create.useMutation({
+    onSuccess: () => {
+      utils.materialMergeRules.list.invalidate();
+      toast.success("Materiais mesclados.");
+    },
+    onError: (e: any) => toast.error(e.message || "Erro ao mesclar materiais"),
+  });
+  const deleteMergeRule = trpc.materialMergeRules.delete.useMutation({
+    onSuccess: () => {
+      utils.materialMergeRules.list.invalidate();
+      toast.success("Mesclagem desfeita.");
+    },
+    onError: () => toast.error("Erro ao desfazer mesclagem"),
+  });
+
   // Resumo geral: somar todos os itens do mesmo material — mesmo quando
   // vêm de composições diferentes com inputId distinto (ex: "Cimento
   // CP-II-32" cadastrado em duas composições separadas). Consolidar por
@@ -210,15 +325,9 @@ export default function MaterialListView({ params }: { params: { id: string } })
   // seu próprio registro de insumo pro "mesmo" material físico. Agora a
   // chave é o código SINAPI (quando existe) ou a descrição normalizada
   // (sem acento, maiúsculas, espaços duplicados) + unidade — assim
-  // variações de grafia/capitalização caem na mesma linha.
-  const normalizeText = (s: string) =>
-    (s || "")
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .toUpperCase()
-      .replace(/\s+/g, " ")
-      .trim();
-
+  // variações de grafia/capitalização caem na mesma linha. Por cima disso,
+  // aplica as regras de mesclagem manual (assistente de duplicados) pra
+  // juntar os casos que a consolidação automática não pega sozinha.
   const summary = useMemo(() => {
     if (!list?.items) return [];
     const q = summarySearch.toLowerCase().trim();
@@ -259,11 +368,39 @@ export default function MaterialListView({ params }: { params: { id: string } })
       entry.totalCost += parseFloat(item.totalCost || "0");
       entry.variants.add(item.description);
     }
-    return Array.from(map.values())
-      .map((e) => ({
+
+    // Aplica as regras de mesclagem manual: redireciona cada sourceKey pro
+    // targetKey escolhido como canônico, somando os valores.
+    const rulesBySource = new Map((mergeRules as any[]).map((r) => [r.sourceKey, r]));
+    for (const [key, entry] of Array.from(map.entries())) {
+      const rule = rulesBySource.get(key);
+      if (!rule) continue;
+      const targetKey = rule.targetKey;
+      if (!map.has(targetKey)) {
+        map.set(targetKey, {
+          sinapiCode: null,
+          description: rule.targetDescription || entry.description,
+          unit: rule.targetUnit || entry.unit,
+          quantity: 0,
+          totalCost: 0,
+          variants: new Set(),
+        });
+      }
+      const target = map.get(targetKey)!;
+      target.quantity += entry.quantity;
+      target.totalCost += entry.totalCost;
+      entry.variants.forEach((v) => target.variants.add(v));
+      map.delete(key);
+    }
+
+    return Array.from(map.entries())
+      .map(([key, e]) => ({
+        key,
         sinapiCode: e.sinapiCode,
         description: e.description,
         unit: e.unit,
+        category: categorizeMaterial(e.description),
+        purchaseSuggestion: suggestPurchaseUnit(e.description, e.unit, e.quantity),
         quantity: e.quantity,
         // Custo unitário derivado do total ÷ quantidade consolidada — garante
         // que Custo Unit. × Qtde Total sempre bate com o Custo Total exibido,
@@ -275,7 +412,52 @@ export default function MaterialListView({ params }: { params: { id: string } })
         variantList: Array.from(e.variants),
       }))
       .sort((a, b) => a.description.localeCompare(b.description));
-  }, [list, summarySearch, summaryTypeFilter]);
+  }, [list, summarySearch, summaryTypeFilter, mergeRules]);
+
+  // Agrupa o resumo por categoria, na ordem definida em MATERIAL_CATEGORIES
+  // (Outros sempre por último).
+  const summaryByCategory = useMemo(() => {
+    const order = [...MATERIAL_CATEGORIES.map((c) => c.name), OUTROS_CATEGORY];
+    const groups = new Map<string, typeof summary>();
+    for (const item of summary) {
+      if (!groups.has(item.category)) groups.set(item.category, []);
+      groups.get(item.category)!.push(item);
+    }
+    return order
+      .filter((name) => groups.has(name))
+      .map((name) => ({
+        category: name,
+        items: groups.get(name)!,
+        subtotal: groups.get(name)!.reduce((sum, i) => sum + i.totalCost, 0),
+      }));
+  }, [summary]);
+
+  // Assistente de mesclagem: sugere pares de materiais parecidos (mesma
+  // unidade, descrição similar) que a consolidação automática não juntou —
+  // ex: um com código SINAPI, outro sem. Roda sobre o resumo já consolidado,
+  // então pares já mesclados (manual ou automaticamente) não aparecem mais.
+  const duplicateCandidates = useMemo(() => {
+    const candidates: { a: (typeof summary)[number]; b: (typeof summary)[number]; score: number }[] = [];
+    for (let i = 0; i < summary.length; i++) {
+      for (let j = i + 1; j < summary.length; j++) {
+        const a = summary[i];
+        const b = summary[j];
+        if (normalizeText(a.unit) !== normalizeText(b.unit)) continue;
+        const score = jaccardSimilarity(wordSet(a.description), wordSet(b.description));
+        if (score >= 0.4) candidates.push({ a, b, score });
+      }
+    }
+    return candidates.sort((x, y) => y.score - x.score).slice(0, 20);
+  }, [summary]);
+
+  const handleMerge = (keep: (typeof summary)[number], discard: (typeof summary)[number]) => {
+    createMergeRule.mutate({
+      sourceKey: discard.key,
+      targetKey: keep.key,
+      targetDescription: keep.description,
+      targetUnit: keep.unit,
+    });
+  };
 
   const grandTotal = useMemo(
     () => summary.reduce((acc, item) => acc + item.totalCost, 0),
@@ -581,53 +763,124 @@ export default function MaterialListView({ params }: { params: { id: string } })
                 {summarySearch ? "Nenhum material encontrado para esta busca." : "Nenhum item nesta lista."}
               </div>
             ) : (
-              <div className="border rounded-lg overflow-hidden">
-                <div className="px-4 py-3 bg-gray-800 text-white flex items-center justify-between">
-                  <h2 className="font-bold text-sm">Resumo Geral — Todos os Insumos Somados</h2>
-                  <span className="text-xs text-gray-300">{summary.length} material(is)</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-gray-100 text-gray-500 uppercase">
-                        <th className="text-left px-3 py-2 font-medium w-24">Cód. SINAPI</th>
-                        <th className="text-left px-3 py-2 font-medium">Descrição</th>
-                        <th className="text-center px-3 py-2 font-medium w-16">UN</th>
-                        <th className="text-right px-3 py-2 font-medium w-28">Qtde Total</th>
-                        <th className="text-right px-3 py-2 font-medium w-28">Custo Unit.</th>
-                        <th className="text-right px-3 py-2 font-medium w-28">Custo Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {summary.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-3 py-2 text-gray-500 font-mono">{item.sinapiCode || "—"}</td>
-                          <td className="px-3 py-2 text-gray-800">
-                            {item.description}
-                            {item.variantCount > 1 && (
-                              <span
-                                title={`Consolidado de ${item.variantCount} variações de descrição encontradas nas composições:\n${item.variantList.join("\n")}`}
-                                className="ml-1.5 text-[10px] bg-purple-100 text-purple-600 px-1 py-0.5 rounded cursor-help"
-                              >
-                                {item.variantCount}x mesclado
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-center text-gray-600">{item.unit}</td>
-                          <td className="px-3 py-2 text-right text-gray-700">{fmtQty(item.quantity)}</td>
-                          <td className="px-3 py-2 text-right text-gray-700">{fmt(item.unitCost)}</td>
-                          <td className="px-3 py-2 text-right font-semibold text-gray-800">{fmt(item.totalCost)}</td>
+              <div className="space-y-4">
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-800 text-white flex items-center justify-between">
+                    <h2 className="font-bold text-sm">Resumo Geral — Todos os Insumos Somados</h2>
+                    <span className="text-xs text-gray-300">{summary.length} material(is)</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-100 text-gray-500 uppercase">
+                          <th className="text-left px-3 py-2 font-medium w-24">Cód. SINAPI</th>
+                          <th className="text-left px-3 py-2 font-medium">Descrição</th>
+                          <th className="text-center px-3 py-2 font-medium w-16">UN</th>
+                          <th className="text-right px-3 py-2 font-medium w-28">Qtde Total</th>
+                          <th className="text-left px-3 py-2 font-medium w-32">Compra sugerida</th>
+                          <th className="text-right px-3 py-2 font-medium w-28">Custo Unit.</th>
+                          <th className="text-right px-3 py-2 font-medium w-28">Custo Total</th>
                         </tr>
+                      </thead>
+                      {summaryByCategory.map((group) => (
+                        <tbody key={group.category} className="divide-y divide-gray-100">
+                          <tr className="bg-blue-50">
+                            <td colSpan={7} className="px-3 py-1.5 font-semibold text-blue-700 text-[11px] uppercase tracking-wide">
+                              {group.category} <span className="text-blue-400 font-normal normal-case">({group.items.length})</span>
+                            </td>
+                          </tr>
+                          {group.items.map((item) => (
+                            <tr key={item.key} className="hover:bg-gray-50">
+                              <td className="px-3 py-2 text-gray-500 font-mono">{item.sinapiCode || "—"}</td>
+                              <td className="px-3 py-2 text-gray-800">
+                                {item.description}
+                                {item.variantCount > 1 && (
+                                  <span
+                                    title={`Consolidado de ${item.variantCount} variações de descrição encontradas nas composições:\n${item.variantList.join("\n")}`}
+                                    className="ml-1.5 text-[10px] bg-purple-100 text-purple-600 px-1 py-0.5 rounded cursor-help"
+                                  >
+                                    {item.variantCount}x mesclado
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-center text-gray-600">{item.unit}</td>
+                              <td className="px-3 py-2 text-right text-gray-700">{fmtQty(item.quantity)}</td>
+                              <td className="px-3 py-2 text-left text-gray-500">{item.purchaseSuggestion || "—"}</td>
+                              <td className="px-3 py-2 text-right text-gray-700">{fmt(item.unitCost)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-gray-800">{fmt(item.totalCost)}</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-gray-50">
+                            <td colSpan={6} className="px-3 py-1.5 text-right text-gray-500 font-medium">Subtotal {group.category}</td>
+                            <td className="px-3 py-1.5 text-right font-semibold text-gray-700">{fmt(group.subtotal)}</td>
+                          </tr>
+                        </tbody>
                       ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-blue-600 text-white font-bold text-xs">
-                        <td colSpan={5} className="px-3 py-3 text-right">TOTAL GERAL</td>
-                        <td className="px-3 py-3 text-right text-base">{fmt(grandTotal)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
+                      <tfoot>
+                        <tr className="bg-blue-600 text-white font-bold text-xs">
+                          <td colSpan={6} className="px-3 py-3 text-right">TOTAL GERAL</td>
+                          <td className="px-3 py-3 text-right text-base">{fmt(grandTotal)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 </div>
+
+                {duplicateCandidates.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
+                      <h2 className="font-bold text-sm text-amber-800">Possíveis materiais duplicados</h2>
+                      <p className="text-[11px] text-amber-700 mt-0.5">
+                        Materiais com descrição parecida e mesma unidade que talvez sejam o mesmo item. Escolha qual descrição manter.
+                      </p>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {duplicateCandidates.map((c, idx) => (
+                        <div key={idx} className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-gray-800 truncate">
+                              {c.a.description} <span className="text-gray-400">×</span> {c.b.description}
+                            </div>
+                            <div className="text-gray-400 text-[10px]">{c.a.unit} · similaridade {(c.score * 100).toFixed(0)}%</div>
+                          </div>
+                          <div className="flex gap-1.5 shrink-0">
+                            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => handleMerge(c.a, c.b)}>
+                              Usar "{c.a.description.length > 20 ? c.a.description.slice(0, 20) + "…" : c.a.description}"
+                            </Button>
+                            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => handleMerge(c.b, c.a)}>
+                              Usar "{c.b.description.length > 20 ? c.b.description.slice(0, 20) + "…" : c.b.description}"
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {mergeRules.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 bg-gray-50 border-b">
+                      <h2 className="font-bold text-sm text-gray-700">Mesclagens ativas</h2>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {(mergeRules as any[]).map((rule) => (
+                        <div key={rule.id} className="px-4 py-2 flex items-center justify-between gap-3 text-xs">
+                          <div className="text-gray-600">
+                            Mesclado em <span className="font-medium text-gray-800">{rule.targetDescription || rule.targetKey}</span>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-[11px] text-red-500 hover:text-red-600"
+                            onClick={() => deleteMergeRule.mutate({ id: rule.id })}
+                          >
+                            Desfazer
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </TabsContent>

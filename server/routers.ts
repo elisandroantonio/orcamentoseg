@@ -9,6 +9,7 @@ import * as db from "./db";
 import { additivesRouter } from "./routers/additives";
 import { materialListsRouter } from "./routers/materialLists";
 import { cubScRouter } from "./routers/cubSc";
+import { materialMergeRulesRouter } from "./routers/materialMergeRules";
 import { 
   inputs, compositions, compositionInputs, projects, budgets, budgetItems, budgetItemInputs,
   budgetStages, scheduleActivities, schedulePeriods, disbursements, categories, clients, companySettings,
@@ -23,6 +24,7 @@ export const appRouter = router({
   additives: additivesRouter,
   materialLists: materialListsRouter,
   cubSc: cubScRouter,
+  materialMergeRules: materialMergeRulesRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

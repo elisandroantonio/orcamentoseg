@@ -881,3 +881,27 @@ export const cubScValues = mysqlTable("cub_sc_values", {
 }));
 export type CubScValue = typeof cubScValues.$inferSelect;
 export type InsertCubScValue = typeof cubScValues.$inferInsert;
+
+/**
+ * Regras de mesclagem manual de materiais na Lista de Materiais (aba Resumo
+ * Geral). A consolidação automática agrupa por código SINAPI ou descrição
+ * normalizada, mas alguns duplicados só um humano reconhece (ex: mesmo
+ * material com código SINAPI de um lado e sem código do outro). Cada regra
+ * redireciona um "sourceKey" (a chave de agrupamento calculada no cliente)
+ * pro "targetKey" escolhido como canônico — sourceKey é único por usuário,
+ * então um material só pode ser mesclado pra UM destino por vez.
+ */
+export const materialMergeRules = mysqlTable("material_merge_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sourceKey: varchar("sourceKey", { length: 300 }).notNull(),
+  targetKey: varchar("targetKey", { length: 300 }).notNull(),
+  targetDescription: text("targetDescription"),
+  targetUnit: varchar("targetUnit", { length: 20 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("material_merge_rules_userId_idx").on(table.userId),
+  userSourceIdx: index("material_merge_rules_user_source_idx").on(table.userId, table.sourceKey),
+}));
+export type MaterialMergeRule = typeof materialMergeRules.$inferSelect;
+export type InsertMaterialMergeRule = typeof materialMergeRules.$inferInsert;
