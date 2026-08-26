@@ -36,6 +36,48 @@ export default function BudgetGantt() {
   // compartilhado com BudgetDashboard (mesma fonte, mesmo número nos dois lugares)
   const planejadoRealizado = useAvancoFisico(budgetId, stages, budget);
 
+  // Árvore Etapa > Sub-etapa: `stages` já traz `parentStageId`, mas vinha
+  // sendo renderizada como lista achatada nos seletores do Gantt (Etapa,
+  // Predecessora, Sucessora), misturando etapas principais e sub-etapas sem
+  // nenhuma indicação visual de hierarquia. Aqui a lista é reordenada em
+  // pré-ordem (pai, depois seus filhos, recursivamente) e cada item ganha um
+  // `depth` usado só pra indentar visualmente — não altera nada no banco.
+  const orderedStages = useMemo(() => {
+    const byParent = new Map<number | null, any[]>();
+    for (const s of stages as any[]) {
+      const key = s.parentStageId ?? null;
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key)!.push(s);
+    }
+    for (const arr of Array.from(byParent.values())) {
+      arr.sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+    }
+    const result: any[] = [];
+    const visited = new Set<number>();
+    const walk = (parentId: number | null, depth: number) => {
+      const children = byParent.get(parentId) || [];
+      for (const child of children) {
+        if (visited.has(child.id)) continue; // guarda contra dado inconsistente (ciclo)
+        visited.add(child.id);
+        result.push({ ...child, depth });
+        walk(child.id, depth + 1);
+      }
+    };
+    walk(null, 0);
+    // Sub-etapas cujo parentStageId aponta pra algo fora da lista (órfãs) —
+    // exibe no nível raiz em vez de sumir do seletor.
+    for (const s of stages as any[]) {
+      if (!visited.has(s.id)) result.push({ ...s, depth: 0 });
+    }
+    return result;
+  }, [stages]);
+
+  const stageDepth = useMemo(() => {
+    const map = new Map<number, number>();
+    orderedStages.forEach((s: any) => map.set(s.id, s.depth));
+    return map;
+  }, [orderedStages]);
+
   const [ganttTasks, setGanttTasks] = useState<GanttTask[]>([]);
   const [selectedStageId, setSelectedStageId] = useState<number | null>(null);
   const [stageStartDate, setStageStartDate] = useState("");
@@ -778,9 +820,15 @@ export default function BudgetGantt() {
                   <SelectValue placeholder="Selecione uma etapa" />
                 </SelectTrigger>
                 <SelectContent>
-                  {stages.map((stage: any) => (
+                  {orderedStages.map((stage: any) => (
                     <SelectItem key={stage.id} value={stage.id.toString()}>
-                      {stage.name}
+                      <span
+                        className="inline-flex items-center"
+                        style={{ paddingLeft: stage.depth * 16 }}
+                      >
+                        {stage.depth > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                        <span className={stage.depth === 0 ? "font-medium" : ""}>{stage.name}</span>
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -802,11 +850,17 @@ export default function BudgetGantt() {
                   <SelectValue placeholder="Selecione etapas predecessoras" />
                 </SelectTrigger>
                 <SelectContent>
-                  {stages
+                  {orderedStages
                     .filter((s: any) => s.id !== selectedStageId)
                     .map((stage: any) => (
                       <SelectItem key={stage.id} value={stage.id.toString()}>
-                        {stage.name}
+                        <span
+                          className="inline-flex items-center"
+                          style={{ paddingLeft: stage.depth * 16 }}
+                        >
+                          {stage.depth > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                          <span className={stage.depth === 0 ? "font-medium" : ""}>{stage.name}</span>
+                        </span>
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -850,11 +904,17 @@ export default function BudgetGantt() {
                   <SelectValue placeholder="Selecione etapas sucessoras" />
                 </SelectTrigger>
                 <SelectContent>
-                  {stages
+                  {orderedStages
                     .filter((s: any) => s.id !== selectedStageId)
                     .map((stage: any) => (
                       <SelectItem key={stage.id} value={stage.id.toString()}>
-                        {stage.name}
+                        <span
+                          className="inline-flex items-center"
+                          style={{ paddingLeft: stage.depth * 16 }}
+                        >
+                          {stage.depth > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                          <span className={stage.depth === 0 ? "font-medium" : ""}>{stage.name}</span>
+                        </span>
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -1001,7 +1061,12 @@ export default function BudgetGantt() {
                     return (
                       <React.Fragment key={stage.id}>
                         <tr className="border-t hover:bg-muted/50">
-                          <td className="p-3 font-medium">{stage.name}</td>
+                          <td className="p-3 font-medium">
+                            <span style={{ paddingLeft: (stageDepth.get(stage.id) || 0) * 16 }} className="inline-flex items-center">
+                              {(stageDepth.get(stage.id) || 0) > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                              {stage.name}
+                            </span>
+                          </td>
                           <td className="p-3 text-sm">
                             {new Date(stage.startDate).toLocaleDateString("pt-BR")}
                           </td>
