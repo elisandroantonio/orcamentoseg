@@ -42,6 +42,10 @@ export default function BudgetGantt() {
   // nenhuma indicação visual de hierarquia. Aqui a lista é reordenada em
   // pré-ordem (pai, depois seus filhos, recursivamente) e cada item ganha um
   // `depth` usado só pra indentar visualmente — não altera nada no banco.
+  // Dentro de cada grupo de irmãs, ordena por Data de Início (igual à lógica
+  // de normalizeStageOrder no servidor) — com `order`/`id` só como
+  // desempate — pra não depender do contador `order` quando ele estiver
+  // fora de sequência.
   const orderedStages = useMemo(() => {
     const byParent = new Map<number | null, any[]>();
     for (const s of stages as any[]) {
@@ -50,7 +54,12 @@ export default function BudgetGantt() {
       byParent.get(key)!.push(s);
     }
     for (const arr of Array.from(byParent.values())) {
-      arr.sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+      arr.sort((a: any, b: any) => {
+        const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
+        const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
+        if (aTime !== bTime) return aTime - bTime;
+        return (a.order || 0) - (b.order || 0) || a.id - b.id;
+      });
     }
     const result: any[] = [];
     const visited = new Set<number>();
@@ -1047,7 +1056,11 @@ export default function BudgetGantt() {
               </thead>
               <tbody>
                 {(() => {
-                  const filteredStages = stages.filter((stage: any) => stage.startDate && stage.endDate);
+                  // Usa orderedStages (árvore + data) em vez da lista crua do
+                  // banco, pra garantir que a tabela sempre mostra etapa e
+                  // sub-etapas agrupadas corretamente mesmo antes de clicar
+                  // em "Reorganizar Etapas".
+                  const filteredStages = orderedStages.filter((stage: any) => stage.startDate && stage.endDate);
 
                   return filteredStages.map((stage: any, index: number) => {
                     const preds = stage.predecessors ? JSON.parse(stage.predecessors) : [];
@@ -1058,6 +1071,18 @@ export default function BudgetGantt() {
                       })
                       .filter(Boolean)
                       .join(", ");
+
+                    // "Mover pra cima/baixo" e "Posição" só fazem sentido
+                    // COMPARANDO com as próprias irmãs (mesma etapa-mãe) —
+                    // é exatamente o que o servidor considera. Usar o índice
+                    // da lista inteira (misturando etapas de pais
+                    // diferentes) fazia os botões ficarem habilitados sem
+                    // fazer nada visível, ou o dropdown "Posição" enfiar uma
+                    // etapa no meio das sub-etapas de outra.
+                    const siblingGroup = filteredStages.filter(
+                      (s: any) => (s.parentStageId ?? null) === (stage.parentStageId ?? null)
+                    );
+                    const siblingIndex = siblingGroup.findIndex((s: any) => s.id === stage.id);
 
                     return (
                       <React.Fragment key={stage.id}>
@@ -1084,8 +1109,8 @@ export default function BudgetGantt() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleReorderStage(stage.id, 'up')}
-                                disabled={index === 0}
-                                title="Mover para cima"
+                                disabled={siblingIndex <= 0}
+                                title="Mover para cima (entre as etapas do mesmo nível)"
                               >
                                 ↑
                               </Button>
@@ -1093,20 +1118,24 @@ export default function BudgetGantt() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleReorderStage(stage.id, 'down')}
-                                disabled={index === filteredStages.length - 1}
-                                title="Mover para baixo"
+                                disabled={siblingIndex === -1 || siblingIndex === siblingGroup.length - 1}
+                                title="Mover para baixo (entre as etapas do mesmo nível)"
                               >
                                 ↓
                               </Button>
                               <Select
-                                value={index.toString()}
-                                onValueChange={(value) => handleMoveToPosition(stage.id, parseInt(value))}
+                                value={siblingIndex >= 0 ? siblingIndex.toString() : undefined}
+                                onValueChange={(value) => {
+                                  const parsed = parseInt(value, 10);
+                                  if (Number.isNaN(parsed)) return;
+                                  handleMoveToPosition(stage.id, parsed);
+                                }}
                               >
                                 <SelectTrigger className="w-[140px] h-8">
                                   <SelectValue placeholder="Mover para..." />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {filteredStages.map((_: any, i: number) => (
+                                  {siblingGroup.map((_: any, i: number) => (
                                     <SelectItem key={i} value={i.toString()}>
                                       Posição {i + 1}
                                     </SelectItem>

@@ -478,16 +478,24 @@ export async function recalculateItemTotalCost(budgetItemId: number) {
 
 /**
  * Corrige o campo `order` de todas as etapas/sub-etapas de um orçamento,
- * renumerando em pré-ordem de árvore: cada etapa raiz na sequência relativa
- * atual, seguida imediatamente de suas próprias sub-etapas (também na
- * sequência relativa atual), antes de passar pra próxima raiz.
+ * renumerando em pré-ordem de árvore: cada etapa raiz, seguida imediatamente
+ * de suas próprias sub-etapas, antes de passar pra próxima raiz — ou seja,
+ * a hierarquia (etapa > sub-etapa) é sempre respeitada.
  *
- * Existe porque `order` é um contador global (não reinicia por sub-etapa) e
- * fica sujeito a inconsistência de leitura logo após vários INSERTs seguidos
- * (ex: o SELECT MAX(order) usado ao criar uma etapa não enxergar ainda
- * sub-etapas recém-criadas de outra etapa raiz) — o que podia fazer uma
- * etapa nova aparecer visualmente antes de sub-etapas de uma etapa raiz já
- * existente, mesmo tendo sido criada depois. Chamada automaticamente ao
+ * Dentro de cada grupo de irmãs (todas as etapas raiz entre si, e todas as
+ * sub-etapas de uma mesma etapa-mãe entre si), a ordem é decidida pela Data
+ * de Início: quem começa mais cedo vem primeiro. Etapas sem data (ou
+ * empatadas na mesma data) usam o campo `order` antigo como critério de
+ * desempate, só pra manter alguma ordem estável.
+ *
+ * A ordenação por data existe porque o campo `order` é um contador global
+ * (não reinicia por sub-etapa) e fica sujeito a inconsistência de leitura
+ * logo após vários INSERTs seguidos (ex: o SELECT MAX(order) usado ao criar
+ * uma etapa não enxergar ainda sub-etapas recém-criadas de outra etapa
+ * raiz) — o que podia fazer uma etapa nova aparecer visualmente antes de
+ * etapas já lançadas, mesmo tendo sido criada depois E tendo uma data de
+ * início mais tardia. Ordenar por data evita depender desse contador nos
+ * casos em que ele já ficou fora de sequência. Chamada automaticamente ao
  * final de createStage, então não depende do usuário clicar em
  * "Reorganizar Etapas" pra corrigir isso na hora.
  */
@@ -496,7 +504,12 @@ export async function normalizeStageOrder(budgetId: number): Promise<void> {
   if (!database) return;
 
   const allStages = await database
-    .select({ id: budgetStages.id, parentStageId: budgetStages.parentStageId, order: budgetStages.order })
+    .select({
+      id: budgetStages.id,
+      parentStageId: budgetStages.parentStageId,
+      order: budgetStages.order,
+      startDate: budgetStages.startDate,
+    })
     .from(budgetStages)
     .where(eq(budgetStages.budgetId, budgetId));
 
@@ -507,7 +520,12 @@ export async function normalizeStageOrder(budgetId: number): Promise<void> {
     byParent.get(key)!.push(s);
   }
   for (const arr of Array.from(byParent.values())) {
-    arr.sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id);
+    arr.sort((a, b) => {
+      const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
+      const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
+      if (aTime !== bTime) return aTime - bTime;
+      return (a.order || 0) - (b.order || 0) || a.id - b.id;
+    });
   }
   const canonicalOrder: { id: number; order: number }[] = [];
   const visited = new Set<number>();

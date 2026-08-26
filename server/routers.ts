@@ -1484,23 +1484,31 @@ export const appRouter = router({
           .where(eq(budgetStages.id, input.stageId));
         if (!currentStageRow) throw new Error("Stage not found");
         
-        // Buscar APENAS os irmãos (mesma etapa pai) ordenados por order, id
+        // Buscar APENAS os irmãos (mesma etapa pai) ordenados por order, id.
+        // Restringe a etapas COM data configurada — é exatamente o mesmo
+        // filtro usado na tabela "Etapas Configuradas" de onde essa ação é
+        // disparada. Sem essa restrição, o "irmão" encontrado podia ser uma
+        // etapa sem data (invisível na tela), fazendo o botão "trocar de
+        // lugar" com algo que o usuário nem vê — parecendo que não fez nada.
+        const siblingsFilter = currentStageRow.parentStageId
+          ? and(
+              eq(budgetStages.budgetId, input.budgetId),
+              eq(budgetStages.parentStageId, currentStageRow.parentStageId),
+              isNotNull(budgetStages.startDate),
+              isNotNull(budgetStages.endDate)
+            )
+          : and(
+              eq(budgetStages.budgetId, input.budgetId),
+              isNull(budgetStages.parentStageId),
+              isNotNull(budgetStages.startDate),
+              isNotNull(budgetStages.endDate)
+            );
         const siblings = await database
           .select()
           .from(budgetStages)
-          .where(
-            currentStageRow.parentStageId
-              ? and(
-                  eq(budgetStages.budgetId, input.budgetId),
-                  eq(budgetStages.parentStageId, currentStageRow.parentStageId)
-                )
-              : and(
-                  eq(budgetStages.budgetId, input.budgetId),
-                  isNull(budgetStages.parentStageId)
-                )
-          )
+          .where(siblingsFilter)
           .orderBy(budgetStages.order, budgetStages.id);
-        
+
         // Encontrar o índice da etapa atual entre os irmãos
         const currentIndex = siblings.findIndex(s => s.id === input.stageId);
         if (currentIndex === -1) throw new Error("Stage not found among siblings");
@@ -1546,49 +1554,78 @@ export const appRouter = router({
       .input(z.object({
         budgetId: z.number(),
         stageId: z.number(),
-        targetPosition: z.number(), // Nova posição (0-based index)
+        targetPosition: z.number(), // Nova posição (0-based) DENTRO do grupo de irmãs (mesma etapa-mãe)
       }))
       .mutation(async ({ ctx, input }) => {
         const database = await getDb();
         if (!database) throw new Error("Database not available");
-        
+
         // Verificar se o orçamento pertence ao usuário
         const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
         if (!budget) throw new Error("Budget not found");
-        
-        // Buscar todas as etapas do orçamento ordenadas por order
-        const stages = await database
+
+        const [currentStageRow] = await database
           .select()
           .from(budgetStages)
-          .where(eq(budgetStages.budgetId, input.budgetId))
+          .where(eq(budgetStages.id, input.stageId));
+        if (!currentStageRow) throw new Error("Stage not found");
+
+        // Escopo = APENAS os irmãos (mesma etapa-mãe) com data configurada —
+        // mesma lógica de reorderStage. "Posição" sempre foi tratada como um
+        // índice na lista INTEIRA (etapas e sub-etapas de todo mundo
+        // misturadas), ignorando a hierarquia — por isso mover uma etapa
+        // raiz podia "enfiar" ela no meio das sub-etapas de outra etapa, e
+        // uma renumeração posterior (criação de nova etapa, ou o botão
+        // "Reorganizar Etapas") desfazia o resultado. Agora "Posição N" é
+        // sempre relativa às próprias irmãs da etapa.
+        const siblingsFilter = currentStageRow.parentStageId
+          ? and(
+              eq(budgetStages.budgetId, input.budgetId),
+              eq(budgetStages.parentStageId, currentStageRow.parentStageId),
+              isNotNull(budgetStages.startDate),
+              isNotNull(budgetStages.endDate)
+            )
+          : and(
+              eq(budgetStages.budgetId, input.budgetId),
+              isNull(budgetStages.parentStageId),
+              isNotNull(budgetStages.startDate),
+              isNotNull(budgetStages.endDate)
+            );
+        const siblings = await database
+          .select()
+          .from(budgetStages)
+          .where(siblingsFilter)
           .orderBy(budgetStages.order, budgetStages.id);
-        
-        // Encontrar a etapa atual
-        const currentIndex = stages.findIndex(s => s.id === input.stageId);
-        if (currentIndex === -1) throw new Error("Stage not found");
-        
+
+        // Encontrar a etapa atual entre as irmãs
+        const currentIndex = siblings.findIndex(s => s.id === input.stageId);
+        if (currentIndex === -1) throw new Error("Stage not found among siblings");
+
         // Validar targetPosition
-        if (input.targetPosition < 0 || input.targetPosition >= stages.length) {
+        if (input.targetPosition < 0 || input.targetPosition >= siblings.length) {
           throw new Error("Invalid target position");
         }
-        
+
         // Se já está na posição desejada, não fazer nada
         if (currentIndex === input.targetPosition) {
           return { success: true };
         }
-        
-        // Remover etapa da posição atual e inserir na nova posição
-        const [movedStage] = stages.splice(currentIndex, 1);
-        stages.splice(input.targetPosition, 0, movedStage);
-        
-        // Atualizar order de todas as etapas afetadas
-        for (let i = 0; i < stages.length; i++) {
-          await database
-            .update(budgetStages)
-            .set({ order: i })
-            .where(eq(budgetStages.id, stages[i].id));
-        }
-        
+
+        // Remover etapa da posição atual e inserir na nova posição, dentro do grupo de irmãs
+        const [movedStage] = siblings.splice(currentIndex, 1);
+        siblings.splice(input.targetPosition, 0, movedStage);
+
+        // Grava a nova ordem das irmãs afetadas numa única query (CASE WHEN)
+        const caseSql = siblings.map(() => `WHEN ? THEN ?`).join(' ');
+        const caseParams: any[] = [];
+        siblings.forEach((s, i) => caseParams.push(s.id, i));
+        const ids = siblings.map((s) => s.id);
+        const inSql = ids.map(() => '?').join(',');
+        await db.rawQuery(
+          `UPDATE budget_stages SET \`order\` = CASE id ${caseSql} END WHERE id IN (${inSql})`,
+          [...caseParams, ...ids]
+        );
+
         return { success: true };
       }),
     
