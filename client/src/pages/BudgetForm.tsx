@@ -1092,11 +1092,54 @@ export default function BudgetForm() {
       
       const newBudgetId = created.id;
       setBudgetId(newBudgetId);
-      
-      // Migrar etapas locais para o banco (em ordem)
+
+      // Migrar etapas locais para o banco, respeitando a hierarquia (etapa >
+      // sub-etapa) na ordem em que foram criadas. Antes, essa migração
+      // ordenava TODAS as etapas locais por um único campo `order` — mas
+      // esse campo é reaproveitado por grupo (cada etapa raiz e cada
+      // sub-etapa reinicia a contagem em 0 dentro do seu próprio pai), então
+      // uma ordenação global por esse número misturava etapas de grupos
+      // diferentes (ex: a 2ª sub-etapa de uma etapa raiz, com order=1,
+      // "furava a fila" na frente de uma nova etapa raiz criada bem depois,
+      // também com order=1 dentro do grupo de raízes). Isso fazia com que
+      // uma etapa nova (ex: "Barrilhete") aparecesse fora de ordem — às
+      // vezes até antes de etapas já lançadas — assim que o orçamento fosse
+      // salvo pela primeira vez.
+      //
+      // Agora a lista é percorrida em pré-ordem: cada etapa raiz na ordem em
+      // que foi criada, seguida imediatamente de suas próprias sub-etapas
+      // (também na ordem de criação), antes de passar pra próxima raiz —
+      // preservando exatamente a sequência em que você foi lançando tudo.
       const stageIdMap: Record<number, number> = {};
-      const sortedLocalStages = [...localStages].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-      
+      const sortedLocalStages = (() => {
+        const byParent = new Map<number | null, any[]>();
+        for (const s of localStages) {
+          const key = s.parentStageId ?? null;
+          if (!byParent.has(key)) byParent.set(key, []);
+          byParent.get(key)!.push(s);
+        }
+        for (const arr of Array.from(byParent.values())) {
+          arr.sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+        }
+        const result: any[] = [];
+        const visited = new Set<number>();
+        const walk = (parentId: number | null) => {
+          for (const child of byParent.get(parentId) || []) {
+            if (visited.has(child.id)) continue;
+            visited.add(child.id);
+            result.push(child);
+            walk(child.id);
+          }
+        };
+        walk(null);
+        // Órfãs (parentStageId aponta pra algo fora da lista local) — inclui
+        // no final em vez de descartar.
+        for (const s of localStages) {
+          if (!visited.has(s.id)) result.push(s);
+        }
+        return result;
+      })();
+
       for (const ls of sortedLocalStages) {
         const realParentId = ls.parentStageId ? stageIdMap[ls.parentStageId] : undefined;
         const result = await createStageMutation.mutateAsync({
