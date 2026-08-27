@@ -396,14 +396,17 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     totalRow.push(`R$ ${grandTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
     rows.push(totalRow);
     
-    // Gerar tabela
+    // Gerar tabela — fonte pequena e alinhamento à direita nos valores
+    // (evita que "R$ 19.357,10" quebre em duas linhas dentro da célula
+    // quando há muitos meses/colunas na mesma página).
     autoTable(doc, {
       head: headers,
       body: rows,
       startY: 28,
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [211, 211, 211], textColor: [0, 0, 0], fontStyle: "bold" },
+      styles: { fontSize: 5.5, cellPadding: 1, halign: "right", valign: "middle", overflow: "linebreak" },
+      headStyles: { fillColor: [211, 211, 211], textColor: [0, 0, 0], fontStyle: "bold", fontSize: 5.5, halign: "center" },
       footStyles: { fillColor: [179, 217, 255], textColor: [0, 0, 0], fontStyle: "bold" },
+      columnStyles: { 0: { halign: "left", fontStyle: "bold" } },
       didParseCell: (data: any) => {
         if (data.row.index === rows.length - 1) {
           data.cell.styles.fillColor = [179, 217, 255];
