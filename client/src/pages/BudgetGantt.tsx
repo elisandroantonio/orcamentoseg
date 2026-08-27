@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useParams } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { BudgetCurveS } from "@/components/budget/BudgetCurveS";
 import { PlanejadoRealizadoChart } from "@/components/budget/PlanejadoRealizadoChart";
 import { useAvancoFisico } from "@/hooks/useBudgetProgress";
 import { toast as showToast } from "sonner";
-import { Calendar, Save, Trash2, FileDown } from "lucide-react";
+import { Calendar, Save, Trash2, FileDown, Loader2 } from "lucide-react";
 import ExcelJS from "exceljs";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -153,6 +153,11 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const [expandedStageId, setExpandedStageId] = useState<number | null>(null);
   const [monthlyDistribution, setMonthlyDistribution] = useState<Record<string, number>>({});
   const [loadedDistributions, setLoadedDistributions] = useState<Set<number>>(new Set());
+
+  // Curva S — ref pra "fotografar" o gráfico (recharts/SVG) na hora de
+  // exportar o PDF, e estado de loading do botão de exportação.
+  const curveSRef = useRef<HTMLDivElement>(null);
+  const [isExportingCurveS, setIsExportingCurveS] = useState(false);
 
   // Carregar TODAS as distribuições ao montar o componente (persistência ao navegar entre abas)
   const { data: allDistributions } = trpc.budgetSchedule.getAllMonthlyDistributions.useQuery(
@@ -451,6 +456,54 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     
     doc.save(`cronograma_desembolso_${budget?.project?.name || "orcamento"}.pdf`);
     toast({ title: "Exportação PDF concluída!" });
+  };
+
+  // Exportar Curva S (gráfico) em PDF — "fotografa" o gráfico já renderizado
+  // (recharts é só SVG, sem os problemas de painel com scroll/overflow que o
+  // Gantt tinha) e desenha abaixo do cabeçalho corporativo padrão.
+  const handleExportCurveSPdf = async () => {
+    if (!curveSRef.current) return;
+    setIsExportingCurveS(true);
+    try {
+      const { default: html2canvas } = await import("html2canvas-pro");
+      const canvas = await html2canvas(curveSRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+      });
+
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const headerBottomY = await drawPdfCorporateHeader(doc, {
+        documentLabel: "CURVA S — DESEMBOLSO ACUMULADO",
+        mainTitle: budget?.project?.name || "Orçamento",
+        subtitle: budget?.title,
+        companyInfo: headerCompanyInfo,
+        clientInfo: headerClientInfo,
+        budgetCode: (budget as any)?.code,
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      const usableWidth = pageWidth - margin * 2;
+      const usableHeight = pageHeight - headerBottomY - margin;
+      const imgAspect = canvas.height / canvas.width;
+      let drawW = usableWidth;
+      let drawH = drawW * imgAspect;
+      if (drawH > usableHeight) {
+        drawH = usableHeight;
+        drawW = drawH / imgAspect;
+      }
+      const drawX = margin + (usableWidth - drawW) / 2;
+      doc.addImage(canvas, "PNG", drawX, headerBottomY, drawW, drawH);
+
+      doc.save(`curva_s_${(budget?.project?.name || "orcamento").replace(/[^a-zA-Z0-9]+/g, "_")}.pdf`);
+      toast({ title: "PDF da Curva S exportado!" });
+    } catch (error) {
+      console.error("Erro ao exportar Curva S em PDF:", error);
+      toast({ title: "Erro ao gerar o PDF da Curva S", variant: "destructive" });
+    } finally {
+      setIsExportingCurveS(false);
+    }
   };
 
   // Salvar distribuição
@@ -1488,10 +1541,22 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
       {/* Curva S */}
       <Card>
         <CardHeader>
-          <CardTitle>Curva S - Desembolso Acumulado</CardTitle>
-          <CardDescription>
-            Visualização do desembolso acumulado ao longo do tempo
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Curva S - Desembolso Acumulado</CardTitle>
+              <CardDescription>
+                Barras: desembolso do mês. Linhas: valor e percentual acumulados.
+              </CardDescription>
+            </div>
+            <Button onClick={handleExportCurveSPdf} variant="outline" size="sm" disabled={isExportingCurveS}>
+              {isExportingCurveS ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4 mr-2" />
+              )}
+              Exportar PDF
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {(() => {
@@ -1512,16 +1577,19 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
 
               accumulated += monthlyTotal;
               const percentage = totalBudget > 0 ? (accumulated / totalBudget) * 100 : 0;
-              
+
               return {
                 period: month,
+                monthly: monthlyTotal,
                 accumulated,
                 percentage,
               };
             });
-            
+
             return curveSData.length > 0 ? (
-              <BudgetCurveS data={curveSData} totalBudget={totalBudget} />
+              <div ref={curveSRef}>
+                <BudgetCurveS data={curveSData} totalBudget={totalBudget} />
+              </div>
             ) : (
               <div className="text-center text-muted-foreground py-8">
                 Nenhum dado disponível. Configure as datas das etapas e distribua os percentuais mensais.

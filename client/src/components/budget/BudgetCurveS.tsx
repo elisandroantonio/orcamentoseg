@@ -1,8 +1,19 @@
 import React from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 
 interface CurveSDataPoint {
   period: string;
+  monthly: number; // desembolso do mês (não acumulado)
   accumulated: number;
   percentage: number;
 }
@@ -12,11 +23,14 @@ interface BudgetCurveSProps {
   totalBudget: number;
 }
 
+const formatCurrency = (value: number) =>
+  `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export function BudgetCurveS({ data, totalBudget }: BudgetCurveSProps) {
   return (
-    <div className="w-full h-[400px]">
+    <div className="w-full h-[420px]">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart
+        <ComposedChart
           data={data}
           margin={{
             top: 5,
@@ -26,51 +40,57 @@ export function BudgetCurveS({ data, totalBudget }: BudgetCurveSProps) {
           }}
         >
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis 
-            dataKey="period" 
-            label={{ value: 'Período', position: 'insideBottom', offset: -5 }}
+          <XAxis
+            dataKey="period"
+            label={{ value: "Período", position: "insideBottom", offset: -5 }}
           />
-          <YAxis 
+          <YAxis
             yAxisId="left"
-            label={{ value: 'Valor Acumulado (R$)', angle: -90, position: 'insideLeft' }}
+            label={{ value: "Valor (R$)", angle: -90, position: "insideLeft" }}
             tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
           />
-          <YAxis 
+          <YAxis
             yAxisId="right"
             orientation="right"
-            label={{ value: 'Percentual Acumulado (%)', angle: 90, position: 'insideRight' }}
+            label={{ value: "Percentual Acumulado (%)", angle: 90, position: "insideRight" }}
             tickFormatter={(value) => `${value.toFixed(0)}%`}
           />
-          <Tooltip 
+          <Tooltip
             formatter={(value: number, name: string) => {
-              if (name === 'Valor Acumulado') {
-                return [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, name];
-              }
-              return [`${value.toFixed(2)}%`, name];
+              if (name === "Percentual Acumulado") return [`${value.toFixed(2)}%`, name];
+              return [formatCurrency(value), name];
             }}
           />
           <Legend />
-          <Line 
+          <Bar
             yAxisId="left"
-            type="monotone" 
-            dataKey="accumulated" 
-            stroke="#8884d8" 
+            dataKey="monthly"
+            fill="#fbbf24"
+            name="Desembolso Mensal"
+            barSize={28}
+            radius={[3, 3, 0, 0]}
+          />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="accumulated"
+            stroke="#8884d8"
             strokeWidth={2}
             name="Valor Acumulado"
             dot={{ r: 4 }}
             activeDot={{ r: 6 }}
           />
-          <Line 
+          <Line
             yAxisId="right"
-            type="monotone" 
-            dataKey="percentage" 
-            stroke="#82ca9d" 
+            type="monotone"
+            dataKey="percentage"
+            stroke="#82ca9d"
             strokeWidth={2}
             name="Percentual Acumulado"
             dot={{ r: 4 }}
             activeDot={{ r: 6 }}
           />
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
