@@ -6,10 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
-import { Plus, Trash2, Eye, RefreshCw, Package, FileText, Calendar } from "lucide-react";
+import { Plus, Trash2, Eye, RefreshCw, Package, FileText, Calendar, ChevronRight, ChevronDown } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +37,16 @@ export default function MaterialLists() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ name: "", description: "" });
   const [selectedBudgetIds, setSelectedBudgetIds] = useState<number[]>([]);
+  const [expandedClients, setExpandedClients] = useState<Set<number>>(new Set());
+
+  const toggleClient = (clientId: number) => {
+    setExpandedClients((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  };
 
   const createMutation = trpc.materialLists.create.useMutation({
     onSuccess: () => {
@@ -79,6 +89,33 @@ export default function MaterialLists() {
         Array.isArray(group.budgets) ? group.budgets : [group]
       )
     : [];
+
+  // Agrupar por cliente (mesmo formato da página de Orçamentos)
+  const groupedBudgets = useMemo(() => {
+    const groups = new Map<number | null, { client: any; budgets: any[] }>();
+    allBudgets.forEach((budget: any) => {
+      const clientId = budget.clientId ?? null;
+      if (!groups.has(clientId)) {
+        groups.set(clientId, { client: budget.client, budgets: [] });
+      }
+      groups.get(clientId)!.budgets.push(budget);
+    });
+    return Array.from(groups.entries()).map(([clientId, data]) => ({
+      clientId,
+      client: data.client,
+      budgets: data.budgets,
+    }));
+  }, [allBudgets]);
+
+  const handleToggleClientAll = (clientBudgets: any[]) => {
+    const ids = clientBudgets.map((b: any) => b.id);
+    const allSelected = ids.every((id) => selectedBudgetIds.includes(id));
+    setSelectedBudgetIds((prev) =>
+      allSelected
+        ? prev.filter((id) => !ids.includes(id))
+        : Array.from(new Set([...prev, ...ids]))
+    );
+  };
 
   return (
     <DashboardLayout>
@@ -205,7 +242,7 @@ export default function MaterialLists() {
 
         {/* Dialog: Criar nova lista */}
         <Dialog open={createOpen} onOpenChange={(open) => { if (!open) { setCreateOpen(false); setSelectedBudgetIds([]); setForm({ name: "", description: "" }); } }}>
-          <DialogContent className="max-w-lg w-[95vw] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Nova Lista de Materiais</DialogTitle>
             </DialogHeader>
@@ -235,24 +272,59 @@ export default function MaterialLists() {
                 {allBudgets.length === 0 ? (
                   <p className="text-xs text-gray-400">Nenhum orçamento disponível</p>
                 ) : (
-                  <div className="border rounded-md divide-y max-h-64 overflow-y-auto">
-                    {allBudgets.map((budget: any) => (
-                      <label
-                        key={budget.id}
-                        className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-gray-50"
-                      >
-                        <Checkbox
-                          checked={selectedBudgetIds.includes(budget.id)}
-                          onCheckedChange={() => handleToggleBudget(budget.id)}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">{budget.title}</p>
-                          {budget.code && (
-                            <p className="text-xs text-gray-400">{budget.code}</p>
-                          )}
+                  <div className="border rounded-md divide-y max-h-[50vh] overflow-y-auto">
+                    {groupedBudgets.map(({ clientId, client, budgets: clientBudgets }) => {
+                      const isExpanded = clientId !== null ? expandedClients.has(clientId) : true;
+                      const allSelected = clientBudgets.every((b: any) => selectedBudgetIds.includes(b.id));
+                      const someSelected = clientBudgets.some((b: any) => selectedBudgetIds.includes(b.id));
+                      return (
+                        <div key={`client-${clientId}`}>
+                          <div
+                            className="flex items-center gap-3 px-3 py-2.5 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                            onClick={() => clientId !== null && toggleClient(clientId)}
+                          >
+                            {clientId !== null ? (
+                              isExpanded ? (
+                                <ChevronDown className="h-4 w-4 text-gray-500 shrink-0" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-gray-500 shrink-0" />
+                              )
+                            ) : (
+                              <span className="w-4 shrink-0" />
+                            )}
+                            <Checkbox
+                              checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                              onCheckedChange={() => handleToggleClientAll(clientBudgets)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <span className="text-sm font-semibold text-gray-800 truncate">
+                              {client ? `${client.name}${client.document ? " - " + client.document : ""}` : "Sem Cliente"}
+                            </span>
+                            <span className="text-xs text-gray-400 ml-1 shrink-0">
+                              ({clientBudgets.length} {clientBudgets.length === 1 ? "orçamento" : "orçamentos"})
+                            </span>
+                          </div>
+                          {isExpanded &&
+                            clientBudgets.map((budget: any) => (
+                              <label
+                                key={budget.id}
+                                className="flex items-center gap-3 pl-10 pr-3 py-2.5 cursor-pointer hover:bg-gray-50 border-t"
+                              >
+                                <Checkbox
+                                  checked={selectedBudgetIds.includes(budget.id)}
+                                  onCheckedChange={() => handleToggleBudget(budget.id)}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{budget.title}</p>
+                                  {budget.code && (
+                                    <p className="text-xs text-gray-400">{budget.code}</p>
+                                  )}
+                                </div>
+                              </label>
+                            ))}
                         </div>
-                      </label>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 {selectedBudgetIds.length > 0 && (
