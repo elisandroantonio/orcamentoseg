@@ -509,6 +509,48 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     // reordenar de novo aqui, e evita depender do `order` da planilha.
     const sortedStages = orderedStages.filter((stage: any) => stage.startDate && stage.endDate);
 
+    // Sanear o grafo de predecessoras ANTES de montar as tarefas do Gantt.
+    // Dado inconsistente (ex.: etapa apontando pra si mesma como
+    // predecessora, ou um ciclo A→B→A criado ao editar as predecessoras)
+    // faz a biblioteca do gráfico entrar num loop infinito ao tentar
+    // desenhar as setas de dependência, travando a aba inteira com
+    // "Maximum call stack size exceeded". Aqui, qualquer aresta que fecharia
+    // um ciclo é descartada (mantém as demais dependências intactas).
+    const stageIdSet = new Set(sortedStages.map((s: any) => s.id.toString()));
+    const rawDeps = new Map<string, string[]>();
+    sortedStages.forEach((stage: any) => {
+      const id = stage.id.toString();
+      let deps: string[] = [];
+      if (stage.predecessors) {
+        try {
+          const parsed = JSON.parse(stage.predecessors);
+          deps = parsed
+            .map((p: any) => String(p?.id ?? p))
+            .filter((depId: string) => depId !== id && stageIdSet.has(depId));
+        } catch {
+          deps = [];
+        }
+      }
+      rawDeps.set(id, deps);
+    });
+    const safeDeps = new Map<string, string[]>();
+    const dfsState = new Map<string, "visiting" | "done">();
+    const resolveDeps = (id: string): string[] => {
+      const cached = safeDeps.get(id);
+      if (cached) return cached;
+      dfsState.set(id, "visiting");
+      const result: string[] = [];
+      for (const depId of rawDeps.get(id) || []) {
+        if (dfsState.get(depId) === "visiting") continue; // fecharia ciclo — descarta
+        result.push(depId);
+        if (dfsState.get(depId) !== "done") resolveDeps(depId);
+      }
+      dfsState.set(id, "done");
+      safeDeps.set(id, result);
+      return result;
+    };
+    sortedStages.forEach((stage: any) => resolveDeps(stage.id.toString()));
+
     sortedStages.forEach((stage: any) => {
       // Adicionar a etapa como tarefa principal
       tasks.push({
@@ -517,7 +559,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
         start: new Date(stage.startDate),
         end: new Date(stage.endDate),
         progress: 0,
-        dependencies: stage.predecessors ? JSON.parse(stage.predecessors).map((p: any) => p.id.toString()) : [],
+        dependencies: safeDeps.get(stage.id.toString()) || [],
         type: "task" as const,
         styles: {
           backgroundColor: "#3b82f6",
@@ -672,7 +714,14 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     reorganizeSuccessors(stageId, end);
   };
 
-  const reorganizeSuccessors = (predecessorId: number, predecessorEndDate: Date) => {
+  const reorganizeSuccessors = (predecessorId: number, predecessorEndDate: Date, visited: Set<number> = new Set()) => {
+    // Guarda contra ciclo (A depende de B e B depende de A, direto ou por
+    // uma cadeia maior): sem isso, um dado inconsistente de predecessoras
+    // faz essa cascata nunca terminar e trava a tela com "Maximum call
+    // stack size exceeded".
+    if (visited.has(predecessorId)) return;
+    visited.add(predecessorId);
+
     // Encontrar todas as etapas que dependem desta
     const successors = stages.filter((s: any) => {
       if (!s.predecessors) return false;
@@ -686,6 +735,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
 
     // Atualizar cada sucessor para começar após o predecessor terminar
     successors.forEach((successor: any) => {
+      if (visited.has(successor.id)) return;
       const newStartDate = new Date(predecessorEndDate);
       newStartDate.setDate(newStartDate.getDate() + 1); // Começa no dia seguinte
 
@@ -704,7 +754,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
       });
 
       // Reorganizar recursivamente os sucessores deste sucessor
-      reorganizeSuccessors(successor.id, newEndDate);
+      reorganizeSuccessors(successor.id, newEndDate, visited);
     });
   };
 
