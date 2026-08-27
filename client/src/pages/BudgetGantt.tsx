@@ -47,7 +47,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   // quando disponível; senão cai no valor calculado pelo servidor em
   // getStages (usado quando o Gantt roda como rota standalone).
   const getStageBdiTotal = (stage: any): number =>
-    stageTotalsWithBdi?.[stage.id] ?? getStageBdiTotal(stage);
+    stageTotalsWithBdi?.[stage.id] ?? parseFloat(stage.totalWithBdi || "0");
 
   // Avanço físico: planejado (datas do Gantt) x realizado (medições) — cálculo
   // compartilhado com BudgetDashboard (mesma fonte, mesmo número nos dois lugares)
