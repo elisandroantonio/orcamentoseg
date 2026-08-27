@@ -1281,6 +1281,9 @@ export const appRouter = router({
             laborHours: budgetItems.laborHours,
             totalLaborHours: budgetItems.totalLaborHours,
             order: budgetItems.order,
+            aplicarEncargosSociais: budgetItems.aplicarEncargosSociais,
+            laborAdjustment: budgetItems.laborAdjustment,
+            materialAdjustment: budgetItems.materialAdjustment,
             composition: {
               id: compositions.id,
               code: compositions.code,
@@ -1317,6 +1320,9 @@ export const appRouter = router({
                 totalCost: budgetItems.totalCost,
                 parentItemId: budgetItems.parentItemId,
                 order: budgetItems.order,
+                aplicarEncargosSociais: budgetItems.aplicarEncargosSociais,
+                laborAdjustment: budgetItems.laborAdjustment,
+                materialAdjustment: budgetItems.materialAdjustment,
                 composition: {
                   id: compositions.id,
                   code: compositions.code,
@@ -1349,42 +1355,146 @@ export const appRouter = router({
           itemsByStage.set(item.stageId, list);
         }
 
-        // Mesma matemática de BDI de antes (encargos só em MO, demais
-        // parcelas do BDI em tudo), só que aplicada em memória sobre os
-        // itens já buscados, em vez de fazer uma query nova por etapa.
-        const encargos = parseFloat(budget.socialCharges || "0") / 100;
-        const lucro = parseFloat(budget.profit || "0") / 100;
-        const impostos = parseFloat(budget.taxes || "0") / 100;
-        const risco = parseFloat(budget.risk || "0") / 100;
-        const garantia = parseFloat(budget.warranty || "0") / 100;
+        // A partir daqui, o cálculo de totalWithBdi replica EXATAMENTE a
+        // matemática usada na aba "Comp. BDI" da planilha (BudgetForm.tsx +
+        // HierarchicalBudgetView.tsx), pra que o valor bata com o que o
+        // usuário vê lá — inclusive pros consumidores que não recebem o
+        // total já pronto via prop (rota standalone /budgets/:id/gantt,
+        // PDFs, etc). A única coisa que fica de fora é `customCosts`
+        // (edição pontual de insumo direto na tela, sem salvar) — isso é
+        // estado local do navegador, não existe no banco.
+        const includeMaterial = Number(budget.includeMaterial ?? 1) !== 0;
+        const socialCharges = parseFloat(budget.socialCharges || "0"); // em %, não dividido por 100 ainda
+        const adminCentral = parseFloat(budget.adminCentral || "0");
+        const profit = parseFloat(budget.profit || "0");
+        const taxes = parseFloat(budget.taxes || "0");
+        const risk = parseFloat(budget.risk || "0");
+        const warranty = parseFloat(budget.warranty || "0");
 
-        const itemTotalWithBdi = (item: {
+        // Fórmula composta TCU/SINAPI: BDI = [(1+AC)(1+G)(1+R)] / (1-L-I) - 1
+        // — mesma fórmula de calcBDIMultiplier em BudgetForm.tsx.
+        const calcBDIMultiplier = (additionalBdi = 0, discount = 0) => {
+          const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
+          const denominator = 1 - profit / 100 - taxes / 100;
+          const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
+          const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
+          return 1 + adjustedBDI;
+        };
+
+        // Configuração de BDI por item (aba "Editar BDI" de cada composição):
+        // liga/desliga BDI em material e M.O., e o additionalIncrement/discount
+        // extras. Só existe uma linha aqui pros itens que o usuário já abriu
+        // e configurou alguma vez — os demais usam o padrão (aplica BDI em
+        // tudo, sem ajuste extra), igual ao client.
+        const allItemIds = [...allItems.map(i => i.id), ...allChildren.map(i => i.id)];
+        const bdiConfigRows = allItemIds.length > 0
+          ? await database
+              .select({
+                budgetItemId: budgetItemBdiConfig.budgetItemId,
+                applyBdiToMaterial: budgetItemBdiConfig.applyBdiToMaterial,
+                applyBdiToLabor: budgetItemBdiConfig.applyBdiToLabor,
+                additionalIncrement: budgetItemBdiConfig.additionalIncrement,
+                discount: budgetItemBdiConfig.discount,
+              })
+              .from(budgetItemBdiConfig)
+              .where(inArray(budgetItemBdiConfig.budgetItemId, allItemIds))
+          : [];
+        const bdiConfigByItem = new Map<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount: number }>();
+        for (const row of bdiConfigRows) {
+          bdiConfigByItem.set(row.budgetItemId, {
+            applyBdiToMaterial: row.applyBdiToMaterial === 1,
+            applyBdiToLabor: row.applyBdiToLabor === 1,
+            additionalIncrement: parseFloat(row.additionalIncrement || "0"),
+            discount: parseFloat(row.discount || "0"),
+          });
+        }
+
+        type FlatItem = {
+          id: number;
           quantity: string | null;
           materialCost: string | null;
           laborCost: string | null;
           equipmentCost: string | null;
           serviceCost: string | null;
           otherCost: string | null;
-        }) => {
-          const qty = parseFloat(item.quantity || "0");
+          aplicarEncargosSociais: number | null;
+          laborAdjustment: string | null;
+          materialAdjustment: string | null;
+        };
+
+        // Valor de material/M.O. de UM item (composição simples ou filho de
+        // um serviço composto) já com BDI aplicado por unidade — equivalente
+        // ao item retornado pelo .map() da aba Comp. BDI (equipment/service/
+        // other entram consolidados dentro de "labor").
+        const itemUnitWithBdi = (item: FlatItem) => {
           const material = parseFloat(item.materialCost || "0");
           const labor = parseFloat(item.laborCost || "0");
           const equipment = parseFloat(item.equipmentCost || "0");
           const service = parseFloat(item.serviceCost || "0");
           const other = parseFloat(item.otherCost || "0");
-          const laborWithEncargos = labor * (1 + encargos);
-          const subtotal = material + laborWithEncargos + equipment + service + other;
-          const totalWithAllBdi = subtotal * (1 + lucro) * (1 + impostos) * (1 + risco) * (1 + garantia);
-          return totalWithAllBdi * qty;
+
+          const effectiveMaterial = includeMaterial ? material : 0;
+          const config = bdiConfigByItem.get(item.id) || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+          const aplicarEncargos = item.aplicarEncargosSociais !== 0; // coluna já vem com default 1
+          const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
+          const bdiMultiplier = calcBDIMultiplier(config.additionalIncrement, config.discount);
+
+          const materialWithBDI = config.applyBdiToMaterial ? effectiveMaterial * bdiMultiplier : effectiveMaterial;
+          const laborWithBDI = config.applyBdiToLabor ? laborWithCharges * bdiMultiplier : laborWithCharges;
+          const equipmentWithBDI = equipment * bdiMultiplier;
+          const serviceWithBDI = service * bdiMultiplier;
+          const otherWithBDI = other * bdiMultiplier;
+          const totalLabor = laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI;
+
+          return { materialWithBDI, totalLabor };
         };
 
-        // Total COM BDI de uma etapa, somando seus itens diretos — mesmo
-        // comportamento de calculateStageTotalWithBdi original (só itens
-        // diretos daquela etapa, sem descer recursivamente por várias
-        // sub-etapas).
-        const stageDirectTotalWithBdi = (stageId: number): number => {
+        // Total de UM item raiz (composição simples ou serviço composto),
+        // já multiplicado pela quantidade — equivalente a getItemEffectiveCosts
+        // em HierarchicalBudgetView.tsx.
+        const rootItemTotalWithBdi = (item: (typeof allItems)[number]): number => {
+          if (item.type === 'composite') {
+            // Serviço composto: soma dos FILHOS (cada um com seu próprio BDI
+            // por unidade), sem materialAdjustment (mesmo comportamento —
+            // provavelmente não intencional — da aba Comp. BDI, que só aplica
+            // laborAdjustment aos filhos de um composto).
+            const children = childrenByParent.get(item.id) || [];
+            let mat = 0;
+            let lab = 0;
+            for (const child of children) {
+              const qty = parseFloat(child.quantity || "0");
+              const { materialWithBDI, totalLabor } = itemUnitWithBdi(child);
+              mat += (includeMaterial ? materialWithBDI : 0) * qty;
+              const childLaborAdj = parseFloat(child.laborAdjustment || "0");
+              lab += (totalLabor * (1 + childLaborAdj / 100)) * qty;
+            }
+            return mat + lab;
+          }
+          // Composição simples: materialAdjustment e laborAdjustment do
+          // próprio item, aplicados DEPOIS do BDI (mesma ordem de
+          // getItemEffectiveCosts).
+          const qty = parseFloat(item.quantity || "0");
+          const { materialWithBDI, totalLabor } = itemUnitWithBdi(item);
+          const matAdjPct = parseFloat(item.materialAdjustment || "0");
+          const laborAdjPct = parseFloat(item.laborAdjustment || "0");
+          const mat = (materialWithBDI * qty) * (1 + matAdjPct / 100);
+          const lab = (totalLabor * qty) * (1 + laborAdjPct / 100);
+          return mat + lab;
+        };
+
+        // Total COM BDI de uma etapa: itens diretos (raiz) da própria etapa
+        // + soma recursiva de TODAS as sub-etapas (não só um nível) — mesmo
+        // comportamento de calculateStageTotal em HierarchicalBudgetView.tsx.
+        const stageTotalWithBdiCache = new Map<number, number>();
+        const stageTotalWithBdi = (stageId: number): number => {
+          if (stageTotalWithBdiCache.has(stageId)) return stageTotalWithBdiCache.get(stageId)!;
           const items = itemsByStage.get(stageId) || [];
-          return items.reduce((sum, item) => sum + itemTotalWithBdi(item), 0);
+          const itemsTotal = items.reduce((sum, item) => sum + rootItemTotalWithBdi(item), 0);
+          const subStages = stages.filter(s => s.parentStageId === stageId);
+          const subStagesTotal = subStages.reduce((sum, sub) => sum + stageTotalWithBdi(sub.id), 0);
+          const total = itemsTotal + subStagesTotal;
+          stageTotalWithBdiCache.set(stageId, total);
+          return total;
         };
 
         const stagesWithItems = stages.map((stage) => {
@@ -1395,24 +1505,10 @@ export const appRouter = router({
               : item
           );
 
-          // Verificar se esta etapa tem sub-etapas
-          const subStages = stages.filter(s => s.parentStageId === stage.id);
-
-          let totalWithBdi = 0;
-          if (subStages.length > 0) {
-            // Se tem sub-etapas, somar o total de todas as sub-etapas
-            for (const subStage of subStages) {
-              totalWithBdi += stageDirectTotalWithBdi(subStage.id);
-            }
-          } else {
-            // Se não tem sub-etapas, calcular pelos itens da própria etapa
-            totalWithBdi = stageDirectTotalWithBdi(stage.id);
-          }
-
           return {
             ...stage,
             items: itemsWithChildren,
-            totalWithBdi: totalWithBdi.toFixed(2),
+            totalWithBdi: stageTotalWithBdi(stage.id).toFixed(2),
           };
         });
 
