@@ -142,11 +142,6 @@ export function GanttChart({
   const [fitMode, setFitMode] = useState<"auto" | "manual">("auto");
   const [manualScale, setManualScale] = useState(100);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  // Override temporário da largura de coluna do calendário, usado SÓ durante
-  // a captura do PDF (ver captureGanttCanvas). null = usa a largura normal
-  // da tela (não mexe na visualização interativa do usuário).
-  const [exportColumnWidth, setExportColumnWidth] = useState<number | null>(null);
-  const normalColumnWidth = viewMode === ViewMode.Month ? 60 : viewMode === ViewMode.Week ? 80 : 40;
 
   useEffect(() => {
     // Converter GanttTask para Task (formato da biblioteca)
@@ -253,104 +248,169 @@ export function GanttChart({
     // pacote com suporte a essas funções de cor, mesma API.
     const { default: html2canvas } = await import("html2canvas-pro");
     const el = ganttRef.current;
+    const SCALE = 2;
 
-    const waitFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-    // Acha o painel de scroll horizontal REAL do calendário: o ancestral
-    // mais próximo do <svg> cuja largura de conteúdo (scrollWidth) é maior
-    // que a largura visível — esse é o painel de largura FIXA e
-    // "overflow: hidden" que a biblioteca usa pra rolar o calendário por
-    // JS/drag (não é scroll nativo do navegador).
-    const findCalendarPanel = (): HTMLElement | null => {
-      const svg = el.querySelector("svg");
-      if (!svg) return null;
-      let p: HTMLElement | null = svg.parentElement;
-      let depth = 0;
-      while (p && p !== el && depth < 10) {
-        if (p.scrollWidth > p.clientWidth + 2) return p;
-        p = p.parentElement;
-        depth++;
+    // Cronogramas mais longos que a largura visível do painel ficavam
+    // cortados no PDF (o calendário simplesmente parava num mês no meio do
+    // projeto, não importa a escala escolhida na janela de exportação).
+    // Causa raiz: a biblioteca do Gantt desenha o calendário inteiro (dois
+    // <svg>: um de cabeçalho com os meses, outro com as linhas/barras) mas
+    // mostra só uma "janela" dele através de um painel de largura FIXA com
+    // "overflow: hidden" (rolagem por JS/drag, não é scroll nativo do
+    // navegador) — os <svg> em si já têm o conteúdo completo, só ficam
+    // clipados visualmente pelo painel.
+    //
+    // Já tentamos: (1) alargar esse painel via CSS antes de capturar, e (2)
+    // encolher a largura das colunas pra caber tudo sem precisar de scroll.
+    // As duas pioraram ou não resolveram — o html2canvas-pro (confirmado na
+    // versão exata usada aqui) simplesmente não desenha corretamente o
+    // trecho que só existe fora da largura originalmente visível, seja lá
+    // qual for o motivo (medidas de layout que ele guarda antes de aplicar
+    // qualquer hack de CSS, aparentemente).
+    //
+    // Solução que funciona de verdade: os dois <svg> do calendário são
+    // desenho vetorial autocontido (não dependem de layout de fora deles) —
+    // então, em vez de pedir pro html2canvas capturar essa parte, a gente
+    // serializa os próprios <svg> (com os estilos computados, cor etc.,
+    // "gravados" em cada elemento antes de serializar, já que um SVG
+    // isolado não enxerga mais o CSS da página) e desenha isso direto num
+    // canvas via uma <img> comum — o jeito NATIVO do navegador de rasterizar
+    // SVG, sem passar pelo html2canvas nessa parte. Isso captura o
+    // calendário INTEIRO, sem nenhum corte, não importa o tamanho do
+    // cronograma. A lista de tarefas (à esquerda) continua sendo capturada
+    // pelo html2canvas normalmente — nela nunca houve problema.
+    const svgToCanvas = async (svgEl: SVGSVGElement): Promise<HTMLCanvasElement> => {
+      const clone = svgEl.cloneNode(true) as SVGSVGElement;
+      const props = [
+        "fill",
+        "stroke",
+        "stroke-width",
+        "font-family",
+        "font-size",
+        "font-weight",
+        "opacity",
+        "text-anchor",
+        "fill-opacity",
+        "stroke-opacity",
+      ];
+      const applyInlineStyle = (src: Element, dest: Element) => {
+        const cs = getComputedStyle(src);
+        let styleStr = "";
+        for (const prop of props) {
+          const value = cs.getPropertyValue(prop);
+          if (value) styleStr += `${prop}:${value};`;
+        }
+        if (styleStr) dest.setAttribute("style", styleStr);
+      };
+      // "Gravar" o estilo computado de cada elemento (cor, fonte etc.) como
+      // atributo inline, porque um SVG serializado sozinho não tem mais
+      // acesso às classes CSS da página (o navegador rasteriza sem elas,
+      // caindo nos padrões — por isso fundos/linhas apareciam pretos antes
+      // dessa etapa).
+      applyInlineStyle(svgEl, clone);
+      const srcAll = svgEl.querySelectorAll("*");
+      const destAll = clone.querySelectorAll("*");
+      for (let i = 0; i < srcAll.length; i++) {
+        applyInlineStyle(srcAll[i], destAll[i]);
       }
-      return null;
+      const width = parseFloat(svgEl.getAttribute("width") || "0") || svgEl.clientWidth;
+      const height = parseFloat(svgEl.getAttribute("height") || "0") || svgEl.clientHeight;
+      // Aumentar a largura/altura DECLARADA do SVG (mantendo o viewBox) pra
+      // rasterizar direto em alta resolução, em vez de desenhar pequeno e
+      // esticar depois (o que ficaria borrado).
+      clone.setAttribute("width", String(width * SCALE));
+      clone.setAttribute("height", String(height * SCALE));
+
+      const svgStr = new XMLSerializer().serializeToString(clone);
+      const blob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      try {
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("Falha ao rasterizar SVG do calendário"));
+          img.src = url;
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = width * SCALE;
+        canvas.height = height * SCALE;
+        const ctx = canvas.getContext("2d")!;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return canvas;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     };
 
-    try {
-      // Cronogramas mais longos que a largura visível do painel ficavam
-      // cortados no PDF (o calendário parava num mês no meio do projeto).
-      // Já tentamos "desclipar" isso via CSS — alargar o painel e trocar
-      // pra "overflow: visible" só durante a captura — mas o html2canvas
-      // simplesmente não desenha o trecho revelado dessa forma: sai em
-      // branco no canvas final, mesmo com o painel corretamente alargado no
-      // DOM (confirmado testando direto com a versão exata do pacote usada
-      // aqui). Provavelmente ele usa alguma referência de layout calculada
-      // antes do hack de CSS.
-      //
-      // Solução que funciona: reduzir a largura de cada coluna do
-      // calendário (prop "columnWidth" da própria biblioteca) só durante a
-      // captura, o suficiente pra o cronograma INTEIRO caber dentro da
-      // largura visível do painel — sem precisar cortar nada. Como é uma
-      // mudança de estado React de verdade (não um hack de CSS solto), a
-      // biblioteca recalcula o SVG do zero corretamente, e o html2canvas
-      // fotografa exatamente o que está desenhado, sem nada escondido. A
-      // largura de coluna é devolvida ao normal no fim (bloco finally) —
-      // não muda o que o usuário vê na tela, só um instante durante a
-      // geração do PDF.
-      let calEl = findCalendarPanel();
-      if (calEl && calEl.scrollWidth > calEl.clientWidth + 2) {
-        let width = normalColumnWidth;
-        for (let attempts = 0; attempts < 6; attempts++) {
-          // 3% de margem de segurança pra sobrar de arredondamento.
-          width = Math.max(1, width * (calEl.clientWidth / calEl.scrollWidth) * 0.97);
-          setExportColumnWidth(width);
-          // esperar o React re-renderizar a biblioteca com a nova largura
-          // de coluna antes de medir de novo.
-          await waitFrame();
-          await waitFrame();
-          await new Promise((resolve) => setTimeout(resolve, 30));
-          calEl = findCalendarPanel();
-          if (!calEl || calEl.scrollWidth <= calEl.clientWidth + 2) break;
-        }
+    // Medir a altura de uma linha de etapa e o deslocamento do cabeçalho do
+    // calendário — usado depois pra paginar sem cortar uma barra de etapa
+    // ao meio entre duas páginas. Cada etapa é um filho direto do grupo
+    // <g class="bar"> da biblioteca (essa classe não é ofuscada), na mesma
+    // ordem das tarefas — não depende de nomes de classe internos, que
+    // mudam a cada build da lib.
+    let rowHeightPx = 0;
+    let headerOffsetPx = 0;
+    const barGroup = el.querySelector(".bar");
+    if (barGroup && barGroup.children.length >= 1) {
+      const rowEls = Array.from(barGroup.children);
+      const containerTop = el.getBoundingClientRect().top;
+      const firstTop = rowEls[0].getBoundingClientRect().top;
+      headerOffsetPx = firstTop - containerTop;
+      if (rowEls.length >= 2) {
+        rowHeightPx = rowEls[1].getBoundingClientRect().top - firstTop;
+      } else {
+        rowHeightPx = rowEls[0].getBoundingClientRect().height;
       }
-
-      // Medir a altura de uma linha de etapa e o deslocamento do cabeçalho
-      // do calendário — já no estado final que será fotografado — usado
-      // depois pra paginar sem cortar uma barra de etapa ao meio entre duas
-      // páginas. Cada etapa é um filho direto do grupo <g class="bar"> da
-      // biblioteca (essa classe não é ofuscada), na mesma ordem das
-      // tarefas — não depende de nomes de classe internos, que mudam a cada
-      // build da lib.
-      let rowHeightPx = 0;
-      let headerOffsetPx = 0;
-      const barGroup = el.querySelector(".bar");
-      if (barGroup && barGroup.children.length >= 1) {
-        const rowEls = Array.from(barGroup.children);
-        const containerTop = el.getBoundingClientRect().top;
-        const firstTop = rowEls[0].getBoundingClientRect().top;
-        headerOffsetPx = firstTop - containerTop;
-        if (rowEls.length >= 2) {
-          rowHeightPx = rowEls[1].getBoundingClientRect().top - firstTop;
-        } else {
-          rowHeightPx = rowEls[0].getBoundingClientRect().height;
-        }
-      }
-
-      const canvas = await html2canvas(el, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-        width: el.scrollWidth,
-        height: el.scrollHeight,
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
-      });
-      // O html2canvas foi chamado com scale:2 — os pixels do canvas são
-      // sempre o dobro dos pixels CSS medidos acima, independente da
-      // densidade de tela real do usuário.
-      return { canvas, meta: { rowHeightPx: rowHeightPx * 2, headerOffsetPx: headerOffsetPx * 2 } };
-    } finally {
-      // Sempre devolver a largura de coluna normal — a captura não deve
-      // alterar o que o usuário está vendo na tela.
-      setExportColumnWidth(null);
     }
+
+    // Captura normal da lista de tarefas + o que já está visível do
+    // calendário (só usada como base pra lista de tarefas — a parte do
+    // calendário é totalmente substituída abaixo).
+    const baseCanvas = await html2canvas(el, {
+      backgroundColor: "#ffffff",
+      scale: SCALE,
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+      windowWidth: el.scrollWidth,
+      windowHeight: el.scrollHeight,
+    });
+
+    const svgs = Array.from(el.querySelectorAll("svg")) as SVGSVGElement[];
+    // Sem <svg> (cronograma vazio) — devolve a captura normal.
+    if (svgs.length === 0) {
+      return { canvas: baseCanvas, meta: { rowHeightPx: rowHeightPx * SCALE, headerOffsetPx: headerOffsetPx * SCALE } };
+    }
+
+    const elRect = el.getBoundingClientRect();
+    const finalCanvas = document.createElement("canvas");
+    finalCanvas.width = baseCanvas.width;
+    finalCanvas.height = baseCanvas.height;
+    // Se o calendário completo for mais largo que a captura base (caso
+    // comum — é exatamente o corte que estamos corrigindo), o canvas final
+    // precisa ser mais largo pra caber tudo.
+    const lastSvgRect = svgs[svgs.length - 1].getBoundingClientRect();
+    const calendarEndXCss = lastSvgRect.left - elRect.left + lastSvgRect.width;
+    finalCanvas.width = Math.max(baseCanvas.width, Math.round(calendarEndXCss * SCALE));
+
+    const ctx = finalCanvas.getContext("2d")!;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+    ctx.drawImage(baseCanvas, 0, 0);
+
+    for (const svg of svgs) {
+      const svgRect = svg.getBoundingClientRect();
+      const xCss = svgRect.left - elRect.left;
+      const yCss = svgRect.top - elRect.top;
+      const svgCanvas = await svgToCanvas(svg);
+      ctx.drawImage(svgCanvas, Math.round(xCss * SCALE), Math.round(yCss * SCALE));
+    }
+
+    // O canvas final foi montado em escala 2 (SCALE) — os pixels são sempre
+    // o dobro dos pixels CSS medidos acima, independente da densidade de
+    // tela real do usuário.
+    return { canvas: finalCanvas, meta: { rowHeightPx: rowHeightPx * SCALE, headerOffsetPx: headerOffsetPx * SCALE } };
   };
 
   // Abre a janela de configuração de exportação (papel + escala + prévia).
@@ -560,7 +620,7 @@ export function GanttChart({
           onDelete={handleTaskDelete}
           onProgressChange={handleProgressChange}
           listCellWidth="200px"
-          columnWidth={exportColumnWidth ?? normalColumnWidth}
+          columnWidth={viewMode === ViewMode.Month ? 60 : viewMode === ViewMode.Week ? 80 : 40}
           locale="pt-BR"
         />
       </div>
