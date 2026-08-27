@@ -30,17 +30,33 @@ const PAPER_SIZES = {
 } as const;
 type PaperSizeKey = keyof typeof PAPER_SIZES;
 
+// Metadados medidos no DOM no momento da captura — usados só pra evitar que
+// a paginação vertical corte uma barra/linha de etapa ao meio no meio de uma
+// página (ver computePdfLayout).
+export interface GanttCaptureMeta {
+  rowHeightPx: number; // altura de uma linha de etapa, já em pixel do canvas capturado (escala 2x)
+  headerOffsetPx: number; // altura da área de cabeçalho do calendário, antes da 1ª linha
+}
+
 // Matemática de paginação compartilhada entre a prévia (canvas na tela) e o
 // PDF final — garante que os dois mostrem exatamente o mesmo resultado.
 // "Ajustar à largura" (auto) sempre cabe numa largura de página só (o
 // comportamento de antes); "manual" aplica uma % em cima dessa largura
 // base, podendo precisar de mais de uma página tanto na largura quanto na
 // altura — igual a imprimir um desenho técnico grande em várias folhas.
+//
+// A quebra vertical é "esperta": em vez de repartir a altura em fatias de
+// tamanho igual (que cortam uma barra de etapa bem no meio quando a divisão
+// não é exata — a reclamação de "corta a folha"), ela avança página por
+// página encaixando quantas LINHAS INTEIRAS couberem, e só quebra a página
+// no início da próxima linha. Sempre a mesma altura de página no máximo,
+// nunca mais — só ajusta pra baixo até a linha anterior completa.
 function computePdfLayout(
   canvas: HTMLCanvasElement,
   paper: { w: number; h: number },
   fitMode: "auto" | "manual",
-  manualScale: number
+  manualScale: number,
+  meta: GanttCaptureMeta | null
 ) {
   const margin = 10;
   const topMargin = 16; // reserva espaço pro título, só desenhado na 1ª página
@@ -53,9 +69,30 @@ function computePdfLayout(
   const totalWidthMm = canvas.width * finalScale;
   const totalHeightMm = canvas.height * finalScale;
   const cols = Math.max(1, Math.ceil(totalWidthMm / usableWidth));
-  const rows = Math.max(1, Math.ceil(totalHeightMm / usableHeight));
 
-  return { margin, topMargin, usableWidth, usableHeight, finalScale, totalWidthMm, totalHeightMm, cols, rows };
+  // Pontos de corte verticais, em pixel do canvas fonte (não em mm) — cada
+  // item é o Y onde uma página termina e a próxima começa.
+  const rowHeightPx = meta && meta.rowHeightPx > 0 ? meta.rowHeightPx : 0;
+  const headerOffsetPx = meta?.headerOffsetPx ?? 0;
+  const maxSlicePx = usableHeight / finalScale; // altura útil de uma página, em px do canvas fonte
+  const rowBreaksPx: number[] = [0];
+  let y = 0;
+  while (y < canvas.height) {
+    let nextY = Math.min(canvas.height, y + maxSlicePx);
+    if (nextY < canvas.height && rowHeightPx > 0 && nextY > headerOffsetPx) {
+      // Recuar até o início da linha completa mais próxima, sem cortar uma
+      // etapa ao meio — só se isso ainda deixar pelo menos 1 linha inteira
+      // nesta página.
+      const rowsFromHeader = Math.floor((nextY - headerOffsetPx) / rowHeightPx);
+      const snapped = headerOffsetPx + rowsFromHeader * rowHeightPx;
+      if (snapped > y) nextY = snapped;
+    }
+    rowBreaksPx.push(nextY);
+    y = nextY;
+  }
+  const rows = rowBreaksPx.length - 1;
+
+  return { margin, topMargin, usableWidth, usableHeight, finalScale, totalWidthMm, totalHeightMm, cols, rows, rowBreaksPx };
 }
 
 export interface GanttTask {
@@ -100,6 +137,7 @@ export function GanttChart({
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [capturedCanvas, setCapturedCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [capturedMeta, setCapturedMeta] = useState<GanttCaptureMeta | null>(null);
   const [paperSize, setPaperSize] = useState<PaperSizeKey>("a4");
   const [fitMode, setFitMode] = useState<"auto" | "manual">("auto");
   const [manualScale, setManualScale] = useState(100);
@@ -202,7 +240,7 @@ export function GanttChart({
   // abrir a janela de exportação) quanto pro PDF final — sem isso, mudar o
   // tamanho do papel ou a escala na janela exigiria refazer a captura da
   // tela a cada clique, o que é lento e re-mostra o cronograma piscando.
-  const captureGanttCanvas = async (): Promise<HTMLCanvasElement | null> => {
+  const captureGanttCanvas = async (): Promise<{ canvas: HTMLCanvasElement; meta: GanttCaptureMeta } | null> => {
     if (!ganttRef.current) return null;
     // html2canvas-pro (não o html2canvas original): o projeto usa cores
     // modernas (oklch/oklab/color-mix) no CSS, que o html2canvas 1.4.1 não
@@ -210,6 +248,27 @@ export function GanttChart({
     // pacote com suporte a essas funções de cor, mesma API.
     const { default: html2canvas } = await import("html2canvas-pro");
     const el = ganttRef.current;
+
+    // Medir a altura de uma linha de etapa e o deslocamento do cabeçalho do
+    // calendário, ANTES de qualquer captura — usado depois pra paginar sem
+    // cortar uma barra de etapa ao meio entre duas páginas. Cada etapa é um
+    // filho direto do grupo <g class="bar"> da biblioteca (essa classe não é
+    // ofuscada), na mesma ordem das tarefas — não depende de nomes de classe
+    // internos, que mudam a cada build da lib.
+    let rowHeightPx = 0;
+    let headerOffsetPx = 0;
+    const barGroup = el.querySelector(".bar");
+    if (barGroup && barGroup.children.length >= 1) {
+      const rowEls = Array.from(barGroup.children);
+      const containerTop = el.getBoundingClientRect().top;
+      const firstTop = rowEls[0].getBoundingClientRect().top;
+      headerOffsetPx = firstTop - containerTop;
+      if (rowEls.length >= 2) {
+        rowHeightPx = rowEls[1].getBoundingClientRect().top - firstTop;
+      } else {
+        rowHeightPx = rowEls[0].getBoundingClientRect().height;
+      }
+    }
 
     // A biblioteca do Gantt implementa o scroll horizontal do calendário com
     // um painel interno de largura FIXA e "overflow: hidden" (rolagem por
@@ -234,7 +293,7 @@ export function GanttChart({
     unclipOverflow(el);
 
     try {
-      return await html2canvas(el, {
+      const canvas = await html2canvas(el, {
         backgroundColor: "#ffffff",
         scale: 2,
         // Captura o conteúdo inteiro (inclusive o que fica fora da área
@@ -244,6 +303,10 @@ export function GanttChart({
         windowWidth: el.scrollWidth,
         windowHeight: el.scrollHeight,
       });
+      // O html2canvas foi chamado com scale:2 — os pixels do canvas são
+      // sempre o dobro dos pixels CSS medidos acima, independente da
+      // densidade de tela real do usuário.
+      return { canvas, meta: { rowHeightPx: rowHeightPx * 2, headerOffsetPx: headerOffsetPx * 2 } };
     } finally {
       // Desfazer a "esticada" temporária, sempre — mesmo se a captura falhar.
       widened.forEach(({ el: node, width, overflow }) => {
@@ -265,9 +328,11 @@ export function GanttChart({
     setShowExportDialog(true);
     setIsCapturing(true);
     setCapturedCanvas(null);
+    setCapturedMeta(null);
     try {
-      const canvas = await captureGanttCanvas();
-      setCapturedCanvas(canvas);
+      const result = await captureGanttCanvas();
+      setCapturedCanvas(result?.canvas ?? null);
+      setCapturedMeta(result?.meta ?? null);
     } catch (err) {
       console.error("Erro ao preparar pré-visualização do PDF do Gantt:", err);
       toast.error("Erro ao preparar a pré-visualização do PDF.");
@@ -286,7 +351,7 @@ export function GanttChart({
     try {
       const { default: jsPDF } = await import("jspdf");
       const paper = PAPER_SIZES[paperSize];
-      const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale);
+      const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale, capturedMeta);
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [paper.w, paper.h] });
 
       let isFirstPage = true;
@@ -295,13 +360,15 @@ export function GanttChart({
           if (!isFirstPage) doc.addPage([paper.w, paper.h], "landscape");
 
           const winXmm = c * layout.usableWidth;
-          const winYmm = r * layout.usableHeight;
           const winWmm = Math.min(layout.usableWidth, layout.totalWidthMm - winXmm);
-          const winHmm = Math.min(layout.usableHeight, layout.totalHeightMm - winYmm);
+          // Corte vertical "esperto": usa os pontos de quebra já calculados
+          // por linha inteira de etapa, em vez de uma altura fixa igual pra
+          // todas as páginas — evita cortar uma barra ao meio.
+          const srcY = layout.rowBreaksPx[r];
+          const srcH = layout.rowBreaksPx[r + 1] - srcY;
+          const winHmm = srcH * layout.finalScale;
           const srcX = winXmm / layout.finalScale;
-          const srcY = winYmm / layout.finalScale;
           const srcW = winWmm / layout.finalScale;
-          const srcH = winHmm / layout.finalScale;
 
           const sliceCanvas = document.createElement("canvas");
           sliceCanvas.width = Math.max(1, Math.round(srcW));
@@ -353,7 +420,7 @@ export function GanttChart({
   useEffect(() => {
     if (!capturedCanvas || !previewCanvasRef.current) return;
     const paper = PAPER_SIZES[paperSize];
-    const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale);
+    const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale, capturedMeta);
     const previewCanvas = previewCanvasRef.current;
     const ctx = previewCanvas.getContext("2d");
     if (!ctx) return;
@@ -383,15 +450,14 @@ export function GanttChart({
         ctx.strokeRect(pageXpx, pageYpx, pageWpx, pageHpx);
 
         const winXmm = c * layout.usableWidth;
-        const winYmm = r * layout.usableHeight;
         const winWmm = Math.min(layout.usableWidth, layout.totalWidthMm - winXmm);
-        const winHmm = Math.min(layout.usableHeight, layout.totalHeightMm - winYmm);
+        const srcY = layout.rowBreaksPx[r];
+        const srcH = layout.rowBreaksPx[r + 1] - srcY;
+        const winHmm = srcH * layout.finalScale;
         if (winWmm <= 0 || winHmm <= 0) continue;
 
         const srcX = winXmm / layout.finalScale;
-        const srcY = winYmm / layout.finalScale;
         const srcW = winWmm / layout.finalScale;
-        const srcH = winHmm / layout.finalScale;
         const topMarginMm = r === 0 && c === 0 ? layout.topMargin : layout.margin;
         const destX = pageXpx + layout.margin * pxPerMm;
         const destY = pageYpx + topMarginMm * pxPerMm;
@@ -406,7 +472,7 @@ export function GanttChart({
         }
       }
     }
-  }, [capturedCanvas, paperSize, fitMode, manualScale, exportTitle]);
+  }, [capturedCanvas, capturedMeta, paperSize, fitMode, manualScale, exportTitle]);
 
   if (ganttTasks.length === 0) {
     return (
@@ -533,7 +599,7 @@ export function GanttChart({
               )}
 
               {capturedCanvas && (() => {
-                const layout = computePdfLayout(capturedCanvas, PAPER_SIZES[paperSize], fitMode, manualScale);
+                const layout = computePdfLayout(capturedCanvas, PAPER_SIZES[paperSize], fitMode, manualScale, capturedMeta);
                 const totalPages = layout.rows * layout.cols;
                 return (
                   <p className="text-xs text-muted-foreground border-t pt-3">
