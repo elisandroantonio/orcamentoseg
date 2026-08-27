@@ -96,6 +96,118 @@ function computePdfLayout(
   return { margin, topMargin, usableWidth, usableHeight, finalScale, totalWidthMm, totalHeightMm, cols, rows, rowBreaksPx };
 }
 
+// Granularidade das colunas de tempo na exportação Excel. Por padrão
+// acompanha a "Visualização" já selecionada na tela (Dia/Semana/Mês) — mas
+// cronogramas longos (obras de vários anos) ficam mais legíveis com colunas
+// mais grossas do que a tela permite, daí as opções extras só pro Excel.
+type ExcelGranularity = "dia" | "semana" | "mes" | "trimestre" | "semestre" | "ano";
+
+const EXCEL_GRANULARITY_LABELS: Record<ExcelGranularity, string> = {
+  dia: "Dia",
+  semana: "Semana",
+  mes: "Mês",
+  trimestre: "Trimestre",
+  semestre: "Semestre",
+  ano: "Ano",
+};
+
+// Largura de coluna (em "caracteres" do Excel) por granularidade — quanto
+// mais grosso o período, mais larga a coluna, pra caber o rótulo.
+const EXCEL_GRANULARITY_COL_WIDTH: Record<ExcelGranularity, number> = {
+  dia: 2.6,
+  semana: 6,
+  mes: 9,
+  trimestre: 12,
+  semestre: 14,
+  ano: 12,
+};
+
+function viewModeToExcelGranularity(vm: ViewMode): ExcelGranularity {
+  if (vm === ViewMode.Day) return "dia";
+  if (vm === ViewMode.Week) return "semana";
+  return "mes";
+}
+
+interface ExcelBucket {
+  start: Date; // meia-noite, início do período (inclusive)
+  end: Date; // meia-noite, fim do período (inclusive)
+  group: string; // rótulo da linha de cima (ano, ou mês/ano no modo dia)
+  unit: string; // rótulo da linha de baixo (dia, mês, trimestre, semestre ou ano)
+}
+
+const MONTH_SHORT_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+// Gera a lista de "colunas de tempo" (buckets) entre duas datas, de acordo
+// com a granularidade escolhida — cada bucket vira uma coluna na planilha.
+// No modo "dia" cada bucket é um dia (comportamento anterior); nos modos mais
+// grossos, um bucket cobre várias semanas/meses e uma etapa é marcada nele
+// se o período dela tocar em qualquer parte do bucket (mesma lógica que um
+// Gantt visual "compactado" mostra).
+function buildExcelBuckets(startDay: Date, endDay: Date, granularity: ExcelGranularity): ExcelBucket[] {
+  const buckets: ExcelBucket[] = [];
+
+  if (granularity === "dia") {
+    for (let d = new Date(startDay); d <= endDay; d.setDate(d.getDate() + 1)) {
+      const cur = new Date(d);
+      buckets.push({
+        start: cur,
+        end: cur,
+        group: `${MONTH_SHORT_PT[cur.getMonth()]}/${String(cur.getFullYear()).slice(2)}`,
+        unit: String(cur.getDate()),
+      });
+    }
+    return buckets;
+  }
+
+  if (granularity === "semana") {
+    // Volta pra segunda-feira da semana que contém startDay (ISO week).
+    const d = new Date(startDay);
+    const back = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - back);
+    while (d <= endDay) {
+      const wStart = new Date(d);
+      const wEnd = new Date(d);
+      wEnd.setDate(wEnd.getDate() + 6);
+      buckets.push({
+        start: wStart,
+        end: wEnd,
+        group: String(wStart.getFullYear()),
+        unit: `${String(wStart.getDate()).padStart(2, "0")}/${String(wStart.getMonth() + 1).padStart(2, "0")}`,
+      });
+      d.setDate(d.getDate() + 7);
+    }
+    return buckets;
+  }
+
+  // mes / trimestre / semestre / ano — todos avançam em blocos de N meses,
+  // só muda o N e o texto do rótulo.
+  const monthsPerBucket = granularity === "mes" ? 1 : granularity === "trimestre" ? 3 : granularity === "semestre" ? 6 : 12;
+  let y = startDay.getFullYear();
+  let m = startDay.getMonth() - (startDay.getMonth() % monthsPerBucket);
+  const endTotal = endDay.getFullYear() * 12 + endDay.getMonth();
+  while (y * 12 + m <= endTotal) {
+    const bStart = new Date(y, m, 1);
+    const bEnd = new Date(y, m + monthsPerBucket, 0); // último dia do bloco
+    let unit: string;
+    if (granularity === "mes") unit = MONTH_SHORT_PT[m];
+    else if (granularity === "trimestre") unit = `T${Math.floor(m / 3) + 1}`;
+    else if (granularity === "semestre") unit = `S${Math.floor(m / 6) + 1}`;
+    else unit = String(y);
+    buckets.push({
+      start: bStart,
+      end: bEnd,
+      group: granularity === "ano" ? "" : String(y),
+      unit,
+    });
+    m += monthsPerBucket;
+    if (m > 11) {
+      y += Math.floor(m / 12);
+      m = m % 12;
+    }
+  }
+  return buckets;
+}
+
 export interface GanttTask {
   id: string;
   name: string;
@@ -140,6 +252,14 @@ export function GanttChart({
   // captura de tela envolvida, então não sofre dos problemas de corte/áreas
   // em branco do PDF — e fica 100% editável no Excel depois.
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [excelGranularity, setExcelGranularity] = useState<ExcelGranularity>(() => viewModeToExcelGranularity(viewMode));
+
+  // Acompanha a "Visualização" da tela por padrão (Dia/Semana/Mês) — o
+  // usuário pode depois trocar manualmente pra Trimestre/Semestre/Ano no
+  // seletor ao lado do botão "Exportar Excel", pra cronogramas longos.
+  useEffect(() => {
+    setExcelGranularity(viewModeToExcelGranularity(viewMode));
+  }, [viewMode]);
 
   // Janela de exportação de PDF (papel + escala + prévia)
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -547,15 +667,12 @@ export function GanttChart({
       );
       const startDay = toMidnight(minDate);
       const endDay = toMidnight(maxDate);
-      const days: Date[] = [];
-      for (let d = new Date(startDay); d <= endDay; d.setDate(d.getDate() + 1)) {
-        days.push(new Date(d));
-      }
+      const buckets = buildExcelBuckets(startDay, endDay, excelGranularity);
+      const colWidth = EXCEL_GRANULARITY_COL_WIDTH[excelGranularity];
 
-      const monthShort = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-      const DAY_COL_START = 4; // A=Atividade, B=Início, C=Término, D em diante = dias
-      const HEADER_MONTH_ROW = 3;
-      const HEADER_DAY_ROW = 4;
+      const COL_START = 4; // A=Atividade, B=Início, C=Término, D em diante = colunas de tempo
+      const HEADER_GROUP_ROW = 3;
+      const HEADER_UNIT_ROW = 4;
       const FIRST_TASK_ROW = 5;
 
       const hexToArgb = (hex?: string, fallback = "FF60A5FA") => {
@@ -569,7 +686,7 @@ export function GanttChart({
 
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet("Cronograma", {
-        views: [{ state: "frozen", xSplit: DAY_COL_START - 1, ySplit: HEADER_DAY_ROW }],
+        views: [{ state: "frozen", xSplit: COL_START - 1, ySplit: HEADER_UNIT_ROW }],
       });
 
       // Título
@@ -581,46 +698,45 @@ export function GanttChart({
       }
 
       // Cabeçalhos fixos (Atividade / Início / Término)
-      worksheet.getCell(HEADER_DAY_ROW, 1).value = "Atividade";
-      worksheet.getCell(HEADER_DAY_ROW, 2).value = "Início";
-      worksheet.getCell(HEADER_DAY_ROW, 3).value = "Término";
+      worksheet.getCell(HEADER_UNIT_ROW, 1).value = "Atividade";
+      worksheet.getCell(HEADER_UNIT_ROW, 2).value = "Início";
+      worksheet.getCell(HEADER_UNIT_ROW, 3).value = "Término";
       for (let c = 1; c <= 3; c++) {
-        const cell = worksheet.getCell(HEADER_DAY_ROW, c);
+        const cell = worksheet.getCell(HEADER_UNIT_ROW, c);
         cell.font = { bold: true };
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
       }
-      worksheet.mergeCells(HEADER_MONTH_ROW, 1, HEADER_DAY_ROW, 1);
-      worksheet.mergeCells(HEADER_MONTH_ROW, 2, HEADER_DAY_ROW, 2);
-      worksheet.mergeCells(HEADER_MONTH_ROW, 3, HEADER_DAY_ROW, 3);
+      worksheet.mergeCells(HEADER_GROUP_ROW, 1, HEADER_UNIT_ROW, 1);
+      worksheet.mergeCells(HEADER_GROUP_ROW, 2, HEADER_UNIT_ROW, 2);
+      worksheet.mergeCells(HEADER_GROUP_ROW, 3, HEADER_UNIT_ROW, 3);
 
-      // Cabeçalho de meses (linha mesclada por mês) + dias (linha com o
-      // número do dia), igual a um Gantt de verdade.
-      let colCursor = DAY_COL_START;
+      // Cabeçalho em 2 linhas: agrupamento em cima (ano, ou mês/ano no modo
+      // dia) mesclado por trecho contínuo, e a unidade embaixo (dia, semana,
+      // mês, trimestre, semestre ou ano) — uma coluna por bucket.
+      let colCursor = COL_START;
       let i = 0;
-      while (i < days.length) {
-        const d = days[i];
-        const y = d.getFullYear();
-        const m = d.getMonth();
-        let span = 0;
-        while (i + span < days.length && days[i + span].getFullYear() === y && days[i + span].getMonth() === m) {
-          span++;
-        }
+      while (i < buckets.length) {
+        const group = buckets[i].group;
+        let span = 1;
+        while (i + span < buckets.length && buckets[i + span].group === group) span++;
         const startCol = colCursor;
         const endCol = colCursor + span - 1;
-        if (endCol > startCol) {
-          worksheet.mergeCells(HEADER_MONTH_ROW, startCol, HEADER_MONTH_ROW, endCol);
+        if (group && endCol > startCol) {
+          worksheet.mergeCells(HEADER_GROUP_ROW, startCol, HEADER_GROUP_ROW, endCol);
         }
-        const monthCell = worksheet.getCell(HEADER_MONTH_ROW, startCol);
-        monthCell.value = `${monthShort[m]}/${String(y).slice(2)}`;
-        monthCell.font = { bold: true, size: 9 };
-        monthCell.alignment = { horizontal: "center", vertical: "middle" };
-        monthCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+        if (group) {
+          const groupCell = worksheet.getCell(HEADER_GROUP_ROW, startCol);
+          groupCell.value = group;
+          groupCell.font = { bold: true, size: 9 };
+          groupCell.alignment = { horizontal: "center", vertical: "middle" };
+          groupCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+        }
         for (let c = startCol; c <= endCol; c++) {
-          const dayCell = worksheet.getCell(HEADER_DAY_ROW, c);
-          dayCell.value = days[i + (c - startCol)].getDate();
-          dayCell.font = { size: 7, color: { argb: "FF6B7280" } };
-          dayCell.alignment = { horizontal: "center", vertical: "middle" };
-          worksheet.getColumn(c).width = 2.6;
+          const unitCell = worksheet.getCell(HEADER_UNIT_ROW, c);
+          unitCell.value = buckets[i + (c - startCol)].unit;
+          unitCell.font = { size: 7, color: { argb: "FF6B7280" } };
+          unitCell.alignment = { horizontal: "center", vertical: "middle" };
+          worksheet.getColumn(c).width = colWidth;
         }
         colCursor = endCol + 1;
         i += span;
@@ -631,7 +747,10 @@ export function GanttChart({
       worksheet.getColumn(3).width = 11;
 
       // Uma linha por tarefa — nome, datas e as células coloridas do
-      // intervalo (a "barra"), preenchidas com a mesma cor usada na tela.
+      // período (a "barra"), preenchidas com a mesma cor usada na tela.
+      // Num bucket mais grosso que 1 dia (semana/mês/trimestre/...), a
+      // célula é pintada se a etapa tocar QUALQUER parte do período —
+      // mesmo critério que um Gantt visual compactado usa.
       ganttTasks.forEach((task, idx) => {
         const rowNum = FIRST_TASK_ROW + idx;
         worksheet.getCell(rowNum, 1).value = task.name;
@@ -647,9 +766,9 @@ export function GanttChart({
         const taskEnd = toMidnight(task.end);
         const argb = hexToArgb((task as any).styles?.backgroundColor, defaultColorFor(task.type));
 
-        days.forEach((day, dIdx) => {
-          if (day >= taskStart && day <= taskEnd) {
-            const col = DAY_COL_START + dIdx;
+        buckets.forEach((bucket, bIdx) => {
+          if (bucket.start <= taskEnd && bucket.end >= taskStart) {
+            const col = COL_START + bIdx;
             worksheet.getCell(rowNum, col).fill = {
               type: "pattern",
               pattern: "solid",
@@ -762,6 +881,21 @@ export function GanttChart({
             <FileDown className="h-4 w-4 mr-2" />
             Exportar PDF
           </Button>
+          <Select
+            value={excelGranularity}
+            onValueChange={(v) => setExcelGranularity(v as ExcelGranularity)}
+          >
+            <SelectTrigger className="w-28" title="Agrupamento das colunas no Excel exportado">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(EXCEL_GRANULARITY_LABELS) as ExcelGranularity[]).map((g) => (
+                <SelectItem key={g} value={g}>
+                  {EXCEL_GRANULARITY_LABELS[g]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             size="sm"
