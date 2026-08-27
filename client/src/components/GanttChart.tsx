@@ -158,16 +158,48 @@ export function GanttChart({
       ]);
 
       const el = ganttRef.current;
-      const canvas = await html2canvas(el, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-        // Captura o conteúdo inteiro (inclusive o que fica fora da área
-        // visível por causa do scroll horizontal/overflow do gráfico).
-        width: el.scrollWidth,
-        height: el.scrollHeight,
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
-      });
+
+      // A biblioteca do Gantt implementa o scroll horizontal do calendário
+      // com um painel interno de largura FIXA e "overflow: hidden" (rolagem
+      // por JS/drag, não pelo scroll nativo do navegador) — por isso
+      // el.scrollWidth sozinho não basta: esse painel interno fica menor que
+      // o SVG do calendário inteiro, e o html2canvas corta tudo que passa da
+      // largura visível dele. Aqui, antes de capturar, qualquer elemento
+      // dentro do gráfico cuja largura de conteúdo (scrollWidth) seja maior
+      // que a largura visível é temporariamente esticado pra caber tudo, e
+      // desfeito logo depois — não altera nada pra quem está usando a tela.
+      const widened: { el: HTMLElement; width: string; overflow: string }[] = [];
+      const unclipOverflow = (root: HTMLElement) => {
+        const all = root.querySelectorAll<HTMLElement>("*");
+        all.forEach((node) => {
+          if (node.scrollWidth > node.clientWidth + 2) {
+            widened.push({ el: node, width: node.style.width, overflow: node.style.overflow });
+            node.style.width = `${node.scrollWidth}px`;
+            node.style.overflow = "visible";
+          }
+        });
+      };
+      unclipOverflow(el);
+
+      let canvas;
+      try {
+        canvas = await html2canvas(el, {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          // Captura o conteúdo inteiro (inclusive o que fica fora da área
+          // visível por causa do scroll horizontal/overflow do gráfico).
+          width: el.scrollWidth,
+          height: el.scrollHeight,
+          windowWidth: el.scrollWidth,
+          windowHeight: el.scrollHeight,
+        });
+      } finally {
+        // Desfazer a "esticada" temporária, sempre — mesmo se a captura falhar.
+        widened.forEach(({ el: node, width, overflow }) => {
+          node.style.width = width;
+          node.style.overflow = overflow;
+        });
+      }
 
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
