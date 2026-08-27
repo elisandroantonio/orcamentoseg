@@ -17,7 +17,17 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Task } from "gantt-task-react";
 
-export default function BudgetGantt() {
+interface BudgetGanttProps {
+  // Totais por etapa já calculados com a fórmula de BDI correta (a mesma
+  // usada na aba "Comp. BDI" da planilha, via HierarchicalBudgetView). Quando
+  // o Gantt está embutido dentro do BudgetForm (aba "Gantt"), o pai passa
+  // esse mapa e ele tem prioridade sobre stage.totalWithBdi (que vem de
+  // getStages no servidor e usa uma fórmula de BDI incompleta). Na rota
+  // standalone /budgets/:id/gantt esse prop não existe, e cai no fallback.
+  stageTotalsWithBdi?: Record<number, number>;
+}
+
+export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {}) {
   const { id } = useParams<{ id: string }>();
   const budgetId = parseInt(id!);
   const toast = (opts: { title: string; variant?: string }) => {
@@ -31,6 +41,13 @@ export default function BudgetGantt() {
   const { data: budget } = trpc.budgets.get.useQuery({ id: budgetId });
   const { data: stagesData, refetch: refetchStages } = trpc.budgets.getStages.useQuery({ budgetId });
   const stages = stagesData || [];
+
+  // Valor total (com BDI) de uma etapa: prioriza o total vindo da aba
+  // "Comp. BDI" (fórmula correta, com adminCentral e overrides por item)
+  // quando disponível; senão cai no valor calculado pelo servidor em
+  // getStages (usado quando o Gantt roda como rota standalone).
+  const getStageBdiTotal = (stage: any): number =>
+    stageTotalsWithBdi?.[stage.id] ?? getStageBdiTotal(stage);
 
   // Avanço físico: planejado (datas do Gantt) x realizado (medições) — cálculo
   // compartilhado com BudgetDashboard (mesma fonte, mesmo número nos dois lugares)
@@ -282,10 +299,10 @@ export default function BudgetGantt() {
         const row = [stage.name];
         allMonths.forEach((month) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-          const value = (percent / 100) * parseFloat(stage.totalWithBdi || "0");
+          const value = (percent / 100) * getStageBdiTotal(stage);
           row.push(value);
         });
-        const total = parseFloat(stage.totalWithBdi || "0");
+        const total = getStageBdiTotal(stage);
         row.push(total);
         worksheet.addRow(row);
       });
@@ -296,12 +313,12 @@ export default function BudgetGantt() {
       const total = desembolsoStages
         .reduce((sum: number, stage: any) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-          return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
+          return sum + (percent * getStageBdiTotal(stage)) / 100;
         }, 0);
       totalRow.push(total as any);
     });
     const grandTotal = desembolsoStages
-      .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0);
+      .reduce((sum: number, stage: any) => sum + getStageBdiTotal(stage), 0);
     totalRow.push(grandTotal as any);
     worksheet.addRow(totalRow);
     
@@ -356,10 +373,10 @@ export default function BudgetGantt() {
         const row = [stage.name];
         allMonths.forEach((month) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-          const value = (percent / 100) * parseFloat(stage.totalWithBdi || "0");
+          const value = (percent / 100) * getStageBdiTotal(stage);
           row.push(`R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
         });
-        const total = parseFloat(stage.totalWithBdi || "0");
+        const total = getStageBdiTotal(stage);
         row.push(`R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
         rows.push(row);
       });
@@ -370,12 +387,12 @@ export default function BudgetGantt() {
       const total = desembolsoStages
         .reduce((sum: number, stage: any) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-          return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
+          return sum + (percent * getStageBdiTotal(stage)) / 100;
         }, 0);
       totalRow.push(`R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
     });
     const grandTotal = desembolsoStages
-      .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0);
+      .reduce((sum: number, stage: any) => sum + getStageBdiTotal(stage), 0);
     totalRow.push(`R$ ${grandTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
     rows.push(totalRow);
     
@@ -413,7 +430,7 @@ export default function BudgetGantt() {
     const months = generateMonthsForStage(stage);
     const distributions = months.map((month, index) => {
       const percentage = monthlyDistribution[`${stageId}-${month}`] || 0;
-      const totalWithBdi = parseFloat(stage.totalWithBdi || "0");
+      const totalWithBdi = getStageBdiTotal(stage);
       const value = (percentage / 100) * totalWithBdi;
       return {
         periodIndex: index,
@@ -1184,7 +1201,7 @@ export default function BudgetGantt() {
                                 <div className="flex items-center justify-between">
                                   <h4 className="font-semibold text-sm">Distribuição Mensal - {stage.name}</h4>
                                   <span className="text-sm text-muted-foreground">
-                                    Valor Total: R$ {parseFloat(stage.totalWithBdi || "0").toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                    Valor Total: R$ {getStageBdiTotal(stage).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                                   </span>
                                 </div>
                                 <div className="grid grid-cols-6 gap-3">
@@ -1208,7 +1225,7 @@ export default function BudgetGantt() {
                                         className="h-8 text-sm"
                                       />
                                       <div className="text-xs text-muted-foreground">
-                                        R$ {((monthlyDistribution[`${stage.id}-${month}`] || 0) * parseFloat(stage.totalWithBdi || "0") / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                        R$ {((monthlyDistribution[`${stage.id}-${month}`] || 0) * getStageBdiTotal(stage) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                                       </div>
                                     </div>
                                   ))}
@@ -1321,7 +1338,7 @@ export default function BudgetGantt() {
                         </td>
                         {getAllMonths().map((month) => {
                           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-                          const value = (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
+                          const value = (percent * getStageBdiTotal(stage)) / 100;
                           const isActive = stageMonths.includes(month);
                           return (
                             <td
@@ -1344,7 +1361,7 @@ export default function BudgetGantt() {
                           );
                         })}
                         <td className="text-right p-2 font-medium">
-                          R$ {parseFloat(stage.totalWithBdi || "0").toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          R$ {getStageBdiTotal(stage).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
                     );
@@ -1355,7 +1372,7 @@ export default function BudgetGantt() {
                     const total = desembolsoStages
                       .reduce((sum: number, stage: any) => {
                         const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-                        return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
+                        return sum + (percent * getStageBdiTotal(stage)) / 100;
                       }, 0);
                     return (
                       <td key={month} className="text-center p-2">
@@ -1368,7 +1385,7 @@ export default function BudgetGantt() {
                   <td className="text-right p-2">
                     R${" "}
                     {desembolsoStages
-                      .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0)
+                      .reduce((sum: number, stage: any) => sum + getStageBdiTotal(stage), 0)
                       .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
@@ -1394,13 +1411,13 @@ export default function BudgetGantt() {
             // "só etapas principais"), pra não duplicar valor de sub-etapa
             // no total acumulado.
             const totalBudget = desembolsoStages
-              .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0);
+              .reduce((sum: number, stage: any) => sum + getStageBdiTotal(stage), 0);
 
             const curveSData = allMonths.map((month) => {
               const monthlyTotal = desembolsoStages
                 .reduce((sum: number, stage: any) => {
                   const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
-                  return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
+                  return sum + (percent * getStageBdiTotal(stage)) / 100;
                 }, 0);
 
               accumulated += monthlyTotal;

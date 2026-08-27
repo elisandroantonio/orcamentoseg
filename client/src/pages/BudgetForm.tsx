@@ -156,6 +156,10 @@ export default function BudgetForm() {
   const [bdiCardsCollapsed, setBdiCardsCollapsed] = useState(true); // Recolhido por padrão
   const [presentationMode, setPresentationMode] = useState(false); // Modo Apresentação
   const [bdiConfigs, setBdiConfigs] = useState<Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number }>>({});
+  // Total COM BDI de cada etapa, calculado pela própria aba "Comp. BDI"
+  // (HierarchicalBudgetView) — repassado pro Gantt/Cronograma de Desembolso
+  // pra garantir que os dois lugares sempre mostrem o mesmo valor.
+  const [stageTotalsWithBdi, setStageTotalsWithBdi] = useState<Record<number, number>>({});
 
   // Estado para controlar se a composição/insumo está sendo adicionado a um item composto
   const [selectedCompositeItemId, setSelectedCompositeItemId] = useState<number | null>(null);
@@ -3230,6 +3234,7 @@ export default function BudgetForm() {
                       includeMaterial={includeMaterial}
                       showBdiConfig={true}
                       bdiConfigs={bdiConfigs}
+                      onStageTotals={setStageTotalsWithBdi}
                       onUpdateBdiConfig={handleUpdateBdiConfig}
                       onAddSubStage={() => {}}
                       onAddComposition={() => {}}
@@ -3905,7 +3910,7 @@ export default function BudgetForm() {
 
             {/* ABA 5 - GANTT */}
             <TabsContent value="gantt" className="space-y-6">
-              <BudgetGantt />
+              <BudgetGantt stageTotalsWithBdi={stageTotalsWithBdi} />
             </TabsContent>
 
             {/* ABA 6 - ADITIVOS */}

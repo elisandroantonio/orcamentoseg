@@ -90,6 +90,11 @@ interface HierarchicalBudgetViewProps {
   onMoveItemUp?: (itemId: number) => void; // Melhoria 17
   onMoveItemDown?: (itemId: number) => void; // Melhoria 17
   includeMaterial?: boolean; // Controle de exibição de material (desabilitar = apenas mão de obra)
+  // Expõe o total calculado de cada etapa (mesmo valor mostrado no cabeçalho
+  // azul da etapa) pro componente pai — usado pelo Cronograma de Desembolso
+  // (aba Gantt) pra mostrar exatamente o mesmo valor desta tabela, em vez de
+  // recalcular BDI de novo num lugar separado e correr o risco de divergir.
+  onStageTotals?: (totals: Record<number, number>) => void;
 }
 
 // Interface para o componente de tabela de insumos
@@ -424,6 +429,7 @@ export default function HierarchicalBudgetView({
   onMoveItemUp,
   onMoveItemDown,
   includeMaterial = true,
+  onStageTotals,
 }: HierarchicalBudgetViewProps) {
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
@@ -1393,6 +1399,20 @@ export default function HierarchicalBudgetView({
     
     return itemsTotal + subStagesTotal;
   };
+
+  // Repassa pro componente pai o total de CADA etapa (mesmo cálculo do
+  // cabeçalho azul de cada linha) — é assim que o Cronograma de Desembolso
+  // (aba Gantt) consegue mostrar exatamente o mesmo valor desta tabela, sem
+  // recalcular BDI numa fórmula separada.
+  useEffect(() => {
+    if (!onStageTotals) return;
+    const totals: Record<number, number> = {};
+    for (const stage of stages) {
+      totals[stage.id] = calculateStageTotal(stage.id);
+    }
+    onStageTotals(totals);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stages, items, bdiConfigs, customCosts, includeMaterial]);
 
   // Calcular totais de material e M.O. separados para uma etapa (para custo por unidade de serviço)
   const calculateStageCosts = (stageId: number): { material: number; labor: number; total: number } => {

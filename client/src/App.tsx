@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ComponentType } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 
@@ -53,7 +53,10 @@ function Router() {
         <Route path={"/budgets/:id/view"} component={BudgetView} />
         <Route path={"/budgets/:id/edit"} component={BudgetForm} />
         <Route path={"/budgets/:id/charts"} component={BudgetCharts} />
-        <Route path={"/budgets/:id/gantt"} component={BudgetGantt} />
+        {/* BudgetGantt aceita um prop opcional stageTotalsWithBdi (usado só quando
+            embutido dentro de BudgetForm) que o wouter não conhece — cast local
+            evita conflito de tipos sem afetar a rota em si. */}
+        <Route path={"/budgets/:id/gantt"} component={BudgetGantt as ComponentType<any>} />
         <Route path={"/financeiro"} component={Financeiro} />
         <Route path={"/bdi-calculator"} component={BDICalculatorPage} />
         <Route path={"/material-lists"} component={MaterialLists} />
