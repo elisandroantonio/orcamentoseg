@@ -142,6 +142,11 @@ export function GanttChart({
   const [fitMode, setFitMode] = useState<"auto" | "manual">("auto");
   const [manualScale, setManualScale] = useState(100);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  // Override temporário da largura de coluna do calendário, usado SÓ durante
+  // a captura do PDF (ver captureGanttCanvas). null = usa a largura normal
+  // da tela (não mexe na visualização interativa do usuário).
+  const [exportColumnWidth, setExportColumnWidth] = useState<number | null>(null);
+  const normalColumnWidth = viewMode === ViewMode.Month ? 60 : viewMode === ViewMode.Week ? 80 : 40;
 
   useEffect(() => {
     // Converter GanttTask para Task (formato da biblioteca)
@@ -249,63 +254,89 @@ export function GanttChart({
     const { default: html2canvas } = await import("html2canvas-pro");
     const el = ganttRef.current;
 
-    // Medir a altura de uma linha de etapa e o deslocamento do cabeçalho do
-    // calendário, ANTES de qualquer captura — usado depois pra paginar sem
-    // cortar uma barra de etapa ao meio entre duas páginas. Cada etapa é um
-    // filho direto do grupo <g class="bar"> da biblioteca (essa classe não é
-    // ofuscada), na mesma ordem das tarefas — não depende de nomes de classe
-    // internos, que mudam a cada build da lib.
-    let rowHeightPx = 0;
-    let headerOffsetPx = 0;
-    const barGroup = el.querySelector(".bar");
-    if (barGroup && barGroup.children.length >= 1) {
-      const rowEls = Array.from(barGroup.children);
-      const containerTop = el.getBoundingClientRect().top;
-      const firstTop = rowEls[0].getBoundingClientRect().top;
-      headerOffsetPx = firstTop - containerTop;
-      if (rowEls.length >= 2) {
-        rowHeightPx = rowEls[1].getBoundingClientRect().top - firstTop;
-      } else {
-        rowHeightPx = rowEls[0].getBoundingClientRect().height;
-      }
-    }
+    const waitFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-    // A biblioteca do Gantt implementa o scroll horizontal do calendário com
-    // um painel interno de largura FIXA e "overflow: hidden" (rolagem por
-    // JS/drag, não pelo scroll nativo do navegador) — por isso el.scrollWidth
-    // sozinho não basta: esse painel interno fica menor que o SVG do
-    // calendário inteiro, e o html2canvas corta tudo que passa da largura
-    // visível dele. Aqui, antes de capturar, o painel é temporariamente
-    // esticado pra caber tudo, e desfeito logo depois — não altera nada pra
-    // quem está usando a tela.
-    //
-    // IMPORTANTE: alargar SÓ o ancestral real do <svg> do calendário — nunca
-    // "qualquer elemento com overflow". A lista de tarefas tem dezenas de
-    // células de nome com "overflow: hidden" + reticências DE PROPÓSITO
-    // (nomes longos truncados). Se alargássemos essas células também, a
-    // coluna de nomes incharia e quebraria o layout antes da captura.
-    const widened: { el: HTMLElement; width: string; overflow: string }[] = [];
-    const svgEl = el.querySelector("svg");
-    if (svgEl) {
-      let p: HTMLElement | null = svgEl.parentElement;
+    // Acha o painel de scroll horizontal REAL do calendário: o ancestral
+    // mais próximo do <svg> cuja largura de conteúdo (scrollWidth) é maior
+    // que a largura visível — esse é o painel de largura FIXA e
+    // "overflow: hidden" que a biblioteca usa pra rolar o calendário por
+    // JS/drag (não é scroll nativo do navegador).
+    const findCalendarPanel = (): HTMLElement | null => {
+      const svg = el.querySelector("svg");
+      if (!svg) return null;
+      let p: HTMLElement | null = svg.parentElement;
       let depth = 0;
       while (p && p !== el && depth < 10) {
-        if (p.scrollWidth > p.clientWidth + 2) {
-          widened.push({ el: p, width: p.style.width, overflow: p.style.overflow });
-          p.style.width = `${p.scrollWidth}px`;
-          p.style.overflow = "visible";
-        }
+        if (p.scrollWidth > p.clientWidth + 2) return p;
         p = p.parentElement;
         depth++;
       }
-    }
+      return null;
+    };
 
     try {
+      // Cronogramas mais longos que a largura visível do painel ficavam
+      // cortados no PDF (o calendário parava num mês no meio do projeto).
+      // Já tentamos "desclipar" isso via CSS — alargar o painel e trocar
+      // pra "overflow: visible" só durante a captura — mas o html2canvas
+      // simplesmente não desenha o trecho revelado dessa forma: sai em
+      // branco no canvas final, mesmo com o painel corretamente alargado no
+      // DOM (confirmado testando direto com a versão exata do pacote usada
+      // aqui). Provavelmente ele usa alguma referência de layout calculada
+      // antes do hack de CSS.
+      //
+      // Solução que funciona: reduzir a largura de cada coluna do
+      // calendário (prop "columnWidth" da própria biblioteca) só durante a
+      // captura, o suficiente pra o cronograma INTEIRO caber dentro da
+      // largura visível do painel — sem precisar cortar nada. Como é uma
+      // mudança de estado React de verdade (não um hack de CSS solto), a
+      // biblioteca recalcula o SVG do zero corretamente, e o html2canvas
+      // fotografa exatamente o que está desenhado, sem nada escondido. A
+      // largura de coluna é devolvida ao normal no fim (bloco finally) —
+      // não muda o que o usuário vê na tela, só um instante durante a
+      // geração do PDF.
+      let calEl = findCalendarPanel();
+      if (calEl && calEl.scrollWidth > calEl.clientWidth + 2) {
+        let width = normalColumnWidth;
+        for (let attempts = 0; attempts < 6; attempts++) {
+          // 3% de margem de segurança pra sobrar de arredondamento.
+          width = Math.max(1, width * (calEl.clientWidth / calEl.scrollWidth) * 0.97);
+          setExportColumnWidth(width);
+          // esperar o React re-renderizar a biblioteca com a nova largura
+          // de coluna antes de medir de novo.
+          await waitFrame();
+          await waitFrame();
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          calEl = findCalendarPanel();
+          if (!calEl || calEl.scrollWidth <= calEl.clientWidth + 2) break;
+        }
+      }
+
+      // Medir a altura de uma linha de etapa e o deslocamento do cabeçalho
+      // do calendário — já no estado final que será fotografado — usado
+      // depois pra paginar sem cortar uma barra de etapa ao meio entre duas
+      // páginas. Cada etapa é um filho direto do grupo <g class="bar"> da
+      // biblioteca (essa classe não é ofuscada), na mesma ordem das
+      // tarefas — não depende de nomes de classe internos, que mudam a cada
+      // build da lib.
+      let rowHeightPx = 0;
+      let headerOffsetPx = 0;
+      const barGroup = el.querySelector(".bar");
+      if (barGroup && barGroup.children.length >= 1) {
+        const rowEls = Array.from(barGroup.children);
+        const containerTop = el.getBoundingClientRect().top;
+        const firstTop = rowEls[0].getBoundingClientRect().top;
+        headerOffsetPx = firstTop - containerTop;
+        if (rowEls.length >= 2) {
+          rowHeightPx = rowEls[1].getBoundingClientRect().top - firstTop;
+        } else {
+          rowHeightPx = rowEls[0].getBoundingClientRect().height;
+        }
+      }
+
       const canvas = await html2canvas(el, {
         backgroundColor: "#ffffff",
         scale: 2,
-        // Captura o conteúdo inteiro (inclusive o que fica fora da área
-        // visível por causa do scroll horizontal/overflow do gráfico).
         width: el.scrollWidth,
         height: el.scrollHeight,
         windowWidth: el.scrollWidth,
@@ -316,11 +347,9 @@ export function GanttChart({
       // densidade de tela real do usuário.
       return { canvas, meta: { rowHeightPx: rowHeightPx * 2, headerOffsetPx: headerOffsetPx * 2 } };
     } finally {
-      // Desfazer a "esticada" temporária, sempre — mesmo se a captura falhar.
-      widened.forEach(({ el: node, width, overflow }) => {
-        node.style.width = width;
-        node.style.overflow = overflow;
-      });
+      // Sempre devolver a largura de coluna normal — a captura não deve
+      // alterar o que o usuário está vendo na tela.
+      setExportColumnWidth(null);
     }
   };
 
@@ -531,7 +560,7 @@ export function GanttChart({
           onDelete={handleTaskDelete}
           onProgressChange={handleProgressChange}
           listCellWidth="200px"
-          columnWidth={viewMode === ViewMode.Month ? 60 : viewMode === ViewMode.Week ? 80 : 40}
+          columnWidth={exportColumnWidth ?? normalColumnWidth}
           locale="pt-BR"
         />
       </div>
