@@ -15,8 +15,9 @@ import { Label } from "./ui/label";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Slider } from "./ui/slider";
 import { Input } from "./ui/input";
-import { FileDown, Loader2 } from "lucide-react";
+import { FileDown, Loader2, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
+import ExcelJS from "exceljs";
 
 // Tamanhos de papel disponíveis pra exportação do Gantt, já em orientação
 // paisagem (largura = lado maior). Mesmos nomes que o jsPDF aceita como
@@ -132,6 +133,13 @@ export function GanttChart({
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Month);
   const [ganttTasks, setGanttTasks] = useState<Task[]>([]);
   const ganttRef = useRef<HTMLDivElement>(null);
+
+  // Exportação em Excel — plano B pro PDF: em vez de "fotografar" o gráfico
+  // (html2canvas/SVG), monta um Gantt de verdade em células, com uma coluna
+  // por dia e o preenchimento colorido representando a barra. Sem nenhuma
+  // captura de tela envolvida, então não sofre dos problemas de corte/áreas
+  // em branco do PDF — e fica 100% editável no Excel depois.
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   // Janela de exportação de PDF (papel + escala + prévia)
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -511,6 +519,165 @@ export function GanttChart({
     }
   };
 
+  // Plano B / alternativa ao PDF: monta o mesmo cronograma numa planilha
+  // Excel de verdade, célula a célula — uma coluna por dia, do início da
+  // tarefa mais cedo ao fim da tarefa mais tarde, e preenche de cor sólida
+  // (a mesma cor da barra na tela, vinda de task.styles.backgroundColor) o
+  // intervalo de dias de cada etapa. Como não passa por html2canvas nem por
+  // captura de tela nenhuma, não sofre dos problemas de corte/área em branco
+  // do PDF — e fica totalmente editável no Excel depois (o usuário pode
+  // ajustar cores, largura de coluna, adicionar formatação etc.).
+  const handleExportExcel = async () => {
+    if (ganttTasks.length === 0) {
+      toast.error("Nenhuma atividade para exportar.");
+      return;
+    }
+    setIsExportingExcel(true);
+    try {
+      // Intervalo total do projeto, em dias (normalizado pra meia-noite pra
+      // não perder/duplicar dia por causa de hora do dia diferente).
+      const toMidnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const minDate = ganttTasks.reduce(
+        (min, t) => (t.start < min ? t.start : min),
+        ganttTasks[0].start
+      );
+      const maxDate = ganttTasks.reduce(
+        (max, t) => (t.end > max ? t.end : max),
+        ganttTasks[0].end
+      );
+      const startDay = toMidnight(minDate);
+      const endDay = toMidnight(maxDate);
+      const days: Date[] = [];
+      for (let d = new Date(startDay); d <= endDay; d.setDate(d.getDate() + 1)) {
+        days.push(new Date(d));
+      }
+
+      const monthShort = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+      const DAY_COL_START = 4; // A=Atividade, B=Início, C=Término, D em diante = dias
+      const HEADER_MONTH_ROW = 3;
+      const HEADER_DAY_ROW = 4;
+      const FIRST_TASK_ROW = 5;
+
+      const hexToArgb = (hex?: string, fallback = "FF60A5FA") => {
+        if (!hex) return fallback;
+        const clean = hex.replace("#", "").toUpperCase();
+        if (clean.length !== 6) return fallback;
+        return `FF${clean}`;
+      };
+      const defaultColorFor = (type?: string) =>
+        type === "project" ? "FF1E3A8A" : type === "milestone" ? "FF111827" : "FF60A5FA";
+
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet("Cronograma", {
+        views: [{ state: "frozen", xSplit: DAY_COL_START - 1, ySplit: HEADER_DAY_ROW }],
+      });
+
+      // Título
+      worksheet.getCell(1, 1).value = "Cronograma — Gráfico de Gantt";
+      worksheet.getCell(1, 1).font = { bold: true, size: 14 };
+      if (exportTitle) {
+        worksheet.getCell(2, 1).value = exportTitle;
+        worksheet.getCell(2, 1).font = { size: 10, color: { argb: "FF666666" } };
+      }
+
+      // Cabeçalhos fixos (Atividade / Início / Término)
+      worksheet.getCell(HEADER_DAY_ROW, 1).value = "Atividade";
+      worksheet.getCell(HEADER_DAY_ROW, 2).value = "Início";
+      worksheet.getCell(HEADER_DAY_ROW, 3).value = "Término";
+      for (let c = 1; c <= 3; c++) {
+        const cell = worksheet.getCell(HEADER_DAY_ROW, c);
+        cell.font = { bold: true };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+      }
+      worksheet.mergeCells(HEADER_MONTH_ROW, 1, HEADER_DAY_ROW, 1);
+      worksheet.mergeCells(HEADER_MONTH_ROW, 2, HEADER_DAY_ROW, 2);
+      worksheet.mergeCells(HEADER_MONTH_ROW, 3, HEADER_DAY_ROW, 3);
+
+      // Cabeçalho de meses (linha mesclada por mês) + dias (linha com o
+      // número do dia), igual a um Gantt de verdade.
+      let colCursor = DAY_COL_START;
+      let i = 0;
+      while (i < days.length) {
+        const d = days[i];
+        const y = d.getFullYear();
+        const m = d.getMonth();
+        let span = 0;
+        while (i + span < days.length && days[i + span].getFullYear() === y && days[i + span].getMonth() === m) {
+          span++;
+        }
+        const startCol = colCursor;
+        const endCol = colCursor + span - 1;
+        if (endCol > startCol) {
+          worksheet.mergeCells(HEADER_MONTH_ROW, startCol, HEADER_MONTH_ROW, endCol);
+        }
+        const monthCell = worksheet.getCell(HEADER_MONTH_ROW, startCol);
+        monthCell.value = `${monthShort[m]}/${String(y).slice(2)}`;
+        monthCell.font = { bold: true, size: 9 };
+        monthCell.alignment = { horizontal: "center", vertical: "middle" };
+        monthCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+        for (let c = startCol; c <= endCol; c++) {
+          const dayCell = worksheet.getCell(HEADER_DAY_ROW, c);
+          dayCell.value = days[i + (c - startCol)].getDate();
+          dayCell.font = { size: 7, color: { argb: "FF6B7280" } };
+          dayCell.alignment = { horizontal: "center", vertical: "middle" };
+          worksheet.getColumn(c).width = 2.6;
+        }
+        colCursor = endCol + 1;
+        i += span;
+      }
+
+      worksheet.getColumn(1).width = 42;
+      worksheet.getColumn(2).width = 11;
+      worksheet.getColumn(3).width = 11;
+
+      // Uma linha por tarefa — nome, datas e as células coloridas do
+      // intervalo (a "barra"), preenchidas com a mesma cor usada na tela.
+      ganttTasks.forEach((task, idx) => {
+        const rowNum = FIRST_TASK_ROW + idx;
+        worksheet.getCell(rowNum, 1).value = task.name;
+        worksheet.getCell(rowNum, 2).value = task.start;
+        worksheet.getCell(rowNum, 2).numFmt = "dd/mm/yyyy";
+        worksheet.getCell(rowNum, 3).value = task.end;
+        worksheet.getCell(rowNum, 3).numFmt = "dd/mm/yyyy";
+        if (task.type === "project") {
+          worksheet.getCell(rowNum, 1).font = { bold: true };
+        }
+
+        const taskStart = toMidnight(task.start);
+        const taskEnd = toMidnight(task.end);
+        const argb = hexToArgb((task as any).styles?.backgroundColor, defaultColorFor(task.type));
+
+        days.forEach((day, dIdx) => {
+          if (day >= taskStart && day <= taskEnd) {
+            const col = DAY_COL_START + dIdx;
+            worksheet.getCell(rowNum, col).fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb },
+            };
+          }
+        });
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gantt_${(exportTitle || "cronograma").replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success("Excel do gráfico de Gantt exportado!");
+    } catch (err) {
+      console.error("Erro ao exportar Excel do Gantt:", err);
+      toast.error("Erro ao gerar o Excel do gráfico.");
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   // Recalcula o preview (canvas em tela) toda vez que a captura, o papel, o
   // modo de ajuste ou a escala mudam — puramente redesenhando a imagem já
   // capturada, sem tocar em html2canvas de novo.
@@ -594,6 +761,19 @@ export function GanttChart({
           >
             <FileDown className="h-4 w-4 mr-2" />
             Exportar PDF
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportExcel}
+            disabled={ganttTasks.length === 0 || isExportingExcel}
+          >
+            {isExportingExcel ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-4 w-4 mr-2" />
+            )}
+            Exportar Excel
           </Button>
           <span className="text-sm text-muted-foreground">Visualização:</span>
           <Select
