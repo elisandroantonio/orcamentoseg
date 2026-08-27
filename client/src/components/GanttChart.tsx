@@ -275,22 +275,30 @@ export function GanttChart({
     // JS/drag, não pelo scroll nativo do navegador) — por isso el.scrollWidth
     // sozinho não basta: esse painel interno fica menor que o SVG do
     // calendário inteiro, e o html2canvas corta tudo que passa da largura
-    // visível dele. Aqui, antes de capturar, qualquer elemento dentro do
-    // gráfico cuja largura de conteúdo (scrollWidth) seja maior que a
-    // largura visível é temporariamente esticado pra caber tudo, e desfeito
-    // logo depois — não altera nada pra quem está usando a tela.
+    // visível dele. Aqui, antes de capturar, o painel é temporariamente
+    // esticado pra caber tudo, e desfeito logo depois — não altera nada pra
+    // quem está usando a tela.
+    //
+    // IMPORTANTE: alargar SÓ o ancestral real do <svg> do calendário — nunca
+    // "qualquer elemento com overflow". A lista de tarefas tem dezenas de
+    // células de nome com "overflow: hidden" + reticências DE PROPÓSITO
+    // (nomes longos truncados). Se alargássemos essas células também, a
+    // coluna de nomes incharia e quebraria o layout antes da captura.
     const widened: { el: HTMLElement; width: string; overflow: string }[] = [];
-    const unclipOverflow = (root: HTMLElement) => {
-      const all = root.querySelectorAll<HTMLElement>("*");
-      all.forEach((node) => {
-        if (node.scrollWidth > node.clientWidth + 2) {
-          widened.push({ el: node, width: node.style.width, overflow: node.style.overflow });
-          node.style.width = `${node.scrollWidth}px`;
-          node.style.overflow = "visible";
+    const svgEl = el.querySelector("svg");
+    if (svgEl) {
+      let p: HTMLElement | null = svgEl.parentElement;
+      let depth = 0;
+      while (p && p !== el && depth < 10) {
+        if (p.scrollWidth > p.clientWidth + 2) {
+          widened.push({ el: p, width: p.style.width, overflow: p.style.overflow });
+          p.style.width = `${p.scrollWidth}px`;
+          p.style.overflow = "visible";
         }
-      });
-    };
-    unclipOverflow(el);
+        p = p.parentElement;
+        depth++;
+      }
+    }
 
     try {
       const canvas = await html2canvas(el, {
