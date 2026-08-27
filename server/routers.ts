@@ -743,6 +743,7 @@ export const appRouter = router({
         status: z.enum(["draft", "sent", "approved", "rejected"]).optional(),
         workStatus: z.enum(['orcamento', 'contrato', 'execucao', 'finalizada', 'nao_fechada']).optional(),
         includeMaterial: z.boolean().optional(),
+        initialPaymentPercent: z.string().optional(),
         items: z.array(z.object({
           compositionId: z.number(),
           quantity: z.string(),
@@ -769,6 +770,7 @@ export const appRouter = router({
         if (budgetData.totalCost) processedData.totalCost = parseFloat(budgetData.totalCost);
         if (budgetData.totalLaborHours) processedData.totalLaborHours = parseFloat(budgetData.totalLaborHours);
         if (budgetData.includeMaterial !== undefined) processedData.includeMaterial = budgetData.includeMaterial ? 1 : 0;
+        if (budgetData.initialPaymentPercent !== undefined) processedData.initialPaymentPercent = parseFloat(budgetData.initialPaymentPercent);
         
         // Remover workStatus do processedData (Drizzle não conhece essa coluna adicionada manualmente)
         const { workStatus: workStatusValue, ...drizzleData } = processedData;

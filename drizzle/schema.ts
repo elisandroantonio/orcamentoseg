@@ -185,6 +185,10 @@ export const budgets = mysqlTable("budgets", {
   frozenAt: timestamp("frozenAt"),          // NULL = aberto; preenchido = congelado
   frozenBy: varchar("frozenBy", { length: 255 }), // Nome do usuário que congelou
   includeMaterial: tinyint("includeMaterial").notNull().default(1), // 1 = incluir material, 0 = apenas M.O.
+  // Entrada na assinatura do contrato (% do valor total com BDI), paga à
+  // parte antes do cronograma mensal — o saldo remanescente é o que a
+  // Planilha de Desembolso distribui mês a mês.
+  initialPaymentPercent: decimal("initialPaymentPercent", { precision: 5, scale: 2 }).notNull().default("0"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({

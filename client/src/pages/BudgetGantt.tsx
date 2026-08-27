@@ -66,8 +66,19 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   // "Comp. BDI" (fórmula correta, com adminCentral e overrides por item)
   // quando disponível; senão cai no valor calculado pelo servidor em
   // getStages (usado quando o Gantt roda como rota standalone).
-  const getStageBdiTotal = (stage: any): number =>
+  const getStageFullTotal = (stage: any): number =>
     stageTotalsWithBdi?.[stage.id] ?? parseFloat(stage.totalWithBdi || "0");
+
+  // Aporte inicial (entrada na assinatura do contrato) — um percentual do
+  // valor TOTAL do contrato, pago à parte antes do cronograma mensal. O
+  // saldo remanescente (1 - esse percentual) é o que sobra pra distribuir
+  // mês a mês — daí "getStageBdiTotal" (usado em toda a Planilha de
+  // Desembolso e na Curva S) já devolve o valor da etapa JÁ COM esse
+  // desconto aplicado, pra não precisar espalhar essa conta em cada lugar
+  // que soma/exibe valor mensal.
+  const initialPaymentPercent = Number((budget as any)?.initialPaymentPercent || 0);
+  const remainingFraction = 1 - initialPaymentPercent / 100;
+  const getStageBdiTotal = (stage: any): number => getStageFullTotal(stage) * remainingFraction;
 
   // Avanço físico: planejado (datas do Gantt) x realizado (medições) — cálculo
   // compartilhado com BudgetDashboard (mesma fonte, mesmo número nos dois lugares)
@@ -286,6 +297,36 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   };
 
   const utils = trpc.useUtils();
+
+  // Aporte inicial (entrada na assinatura) — salvo no próprio orçamento.
+  // Input local editável em texto (aceita vírgula/ponto enquanto digita) que
+  // só é persistido ao sair do campo (onBlur), pra não disparar uma
+  // mutation a cada tecla.
+  const [initialPaymentInput, setInitialPaymentInput] = useState<string>("");
+  useEffect(() => {
+    if (budget) {
+      setInitialPaymentInput(String((budget as any).initialPaymentPercent ?? "0"));
+    }
+  }, [(budget as any)?.initialPaymentPercent]);
+  const updateInitialPaymentMutation = trpc.budgets.update.useMutation({
+    onSuccess: () => {
+      toast({ title: "Entrada salva com sucesso!" });
+      utils.budgets.get.invalidate({ id: budgetId });
+    },
+    onError: (error: any) => {
+      toast({ title: `Erro ao salvar entrada: ${error.message}`, variant: "destructive" });
+    },
+  });
+  const handleSaveInitialPayment = () => {
+    if (!budget) return;
+    const value = Math.min(100, Math.max(0, Number(initialPaymentInput.replace(",", ".")) || 0));
+    updateInitialPaymentMutation.mutate({
+      id: budgetId,
+      title: budget.title,
+      initialPaymentPercent: String(value),
+    } as any);
+  };
+
   const saveMonthlyDistributionMutation = trpc.budgetSchedule.saveMonthlyDistribution.useMutation({
     onSuccess: (_, variables) => {
       toast({ title: "Distribuição salva com sucesso!" });
@@ -316,6 +357,19 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
       budgetCode: (budget as any)?.code,
       fillWidthCols: allMonths.length + 2,
     });
+
+    // Linha de resumo da entrada (aporte inicial), quando configurada —
+    // deixa claro que o cronograma abaixo distribui só o SALDO após a
+    // entrada, não o valor total do contrato.
+    if (initialPaymentPercent > 0) {
+      const totalContrato = desembolsoStages.reduce((sum: number, stage: any) => sum + getStageFullTotal(stage), 0);
+      const valorEntrada = totalContrato * (initialPaymentPercent / 100);
+      const infoRowNum = worksheet.rowCount + 1;
+      const infoCell = worksheet.getCell(infoRowNum, 1);
+      infoCell.value = `Entrada na assinatura (${initialPaymentPercent}%): R$ ${valorEntrada.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}  ·  Saldo distribuído abaixo: R$ ${(totalContrato - valorEntrada).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}  ·  Total do contrato: R$ ${totalContrato.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+      infoCell.font = { italic: true, size: 9, color: { argb: "FF666666" } };
+      worksheet.mergeCells(infoRowNum, 1, infoRowNum, allMonths.length + 2);
+    }
 
     // Cabeçalho da tabela
     const headers = ["Atividade", ...allMonths, "Total"];
@@ -403,7 +457,25 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     });
 
     const allMonths = getAllMonths();
-    
+
+    // Linha de resumo da entrada (aporte inicial), quando configurada.
+    let tableStartY = headerBottomY;
+    if (initialPaymentPercent > 0) {
+      const totalContrato = desembolsoStages.reduce((sum: number, stage: any) => sum + getStageFullTotal(stage), 0);
+      const valorEntrada = totalContrato * (initialPaymentPercent / 100);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "italic");
+      doc.setTextColor(100);
+      doc.text(
+        `Entrada na assinatura (${initialPaymentPercent}%): R$ ${valorEntrada.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}   ·   Saldo distribuído abaixo: R$ ${(totalContrato - valorEntrada).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}   ·   Total do contrato: R$ ${totalContrato.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        10,
+        headerBottomY
+      );
+      doc.setTextColor(0);
+      doc.setFont("helvetica", "normal");
+      tableStartY = headerBottomY + 5;
+    }
+
     // Preparar dados para tabela
     const headers = [["Atividade", ...allMonths, "Total"]];
     const rows: any[] = [];
@@ -441,7 +513,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     autoTable(doc, {
       head: headers,
       body: rows,
-      startY: headerBottomY,
+      startY: tableStartY,
       styles: { fontSize: 5.5, cellPadding: 1, halign: "right", valign: "middle", overflow: "linebreak" },
       headStyles: { fillColor: [211, 211, 211], textColor: [0, 0, 0], fontStyle: "bold", fontSize: 5.5, halign: "center" },
       footStyles: { fillColor: [179, 217, 255], textColor: [0, 0, 0], fontStyle: "bold" },
@@ -1452,6 +1524,49 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
           </div>
         </CardHeader>
         <CardContent>
+          {(() => {
+            const totalContrato = desembolsoStages.reduce(
+              (sum: number, stage: any) => sum + getStageFullTotal(stage),
+              0
+            );
+            const valorEntrada = totalContrato * (initialPaymentPercent / 100);
+            const saldoDistribuido = totalContrato - valorEntrada;
+            return (
+              <div className="mb-4 p-4 border rounded-lg bg-muted/30 flex flex-wrap items-end gap-6">
+                <div className="space-y-1">
+                  <Label htmlFor="initialPaymentPercent" className="text-sm">
+                    Entrada na assinatura do contrato (%)
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="initialPaymentPercent"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={initialPaymentInput}
+                      onChange={(e) => setInitialPaymentInput(e.target.value)}
+                      onBlur={handleSaveInitialPayment}
+                      className="w-24"
+                    />
+                    <span className="text-sm text-muted-foreground">%</span>
+                  </div>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Valor de entrada: </span>
+                  <strong>R$ {valorEntrada.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Saldo distribuído no cronograma abaixo: </span>
+                  <strong>R$ {saldoDistribuido.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Total do contrato: </span>
+                  <strong>R$ {totalContrato.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                </div>
+              </div>
+            );
+          })()}
           <div className="border rounded-lg overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted">
@@ -1561,14 +1676,30 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
         <CardContent>
           {(() => {
             const allMonths = getAllMonths();
-            let accumulated = 0;
             // Mesma base da tabela de Desembolso acima (respeita o toggle
             // "só etapas principais"), pra não duplicar valor de sub-etapa
-            // no total acumulado.
+            // no total acumulado. Usa o valor CHEIO (sem o desconto da
+            // entrada) — é o "100%" de referência pro percentual acumulado.
             const totalBudget = desembolsoStages
-              .reduce((sum: number, stage: any) => sum + getStageBdiTotal(stage), 0);
+              .reduce((sum: number, stage: any) => sum + getStageFullTotal(stage), 0);
+            const valorEntrada = totalBudget * (initialPaymentPercent / 100);
+            let accumulated = 0;
 
-            const curveSData = allMonths.map((month) => {
+            const curveSData: { period: string; monthly: number; accumulated: number; percentage: number }[] = [];
+
+            // Entrada na assinatura — primeiro ponto da curva, antes de
+            // qualquer mês do cronograma, quando configurada.
+            if (initialPaymentPercent > 0) {
+              accumulated += valorEntrada;
+              curveSData.push({
+                period: "Assinatura",
+                monthly: valorEntrada,
+                accumulated,
+                percentage: totalBudget > 0 ? (accumulated / totalBudget) * 100 : 0,
+              });
+            }
+
+            allMonths.forEach((month) => {
               const monthlyTotal = desembolsoStages
                 .reduce((sum: number, stage: any) => {
                   const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
@@ -1578,12 +1709,12 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
               accumulated += monthlyTotal;
               const percentage = totalBudget > 0 ? (accumulated / totalBudget) * 100 : 0;
 
-              return {
+              curveSData.push({
                 period: month,
                 monthly: monthlyTotal,
                 accumulated,
                 percentage,
-              };
+              });
             });
 
             return curveSData.length > 0 ? (
