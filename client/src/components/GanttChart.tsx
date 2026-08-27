@@ -18,6 +18,12 @@ import { Input } from "./ui/input";
 import { FileDown, Loader2, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import ExcelJS from "exceljs";
+import {
+  drawPdfCorporateHeader,
+  addExcelCorporateHeader,
+  type CorporateCompanyInfo,
+  type CorporateClientInfo,
+} from "@/lib/documentHeader";
 
 // Tamanhos de papel disponíveis pra exportação do Gantt, já em orientação
 // paisagem (largura = lado maior). Mesmos nomes que o jsPDF aceita como
@@ -57,10 +63,11 @@ function computePdfLayout(
   paper: { w: number; h: number },
   fitMode: "auto" | "manual",
   manualScale: number,
-  meta: GanttCaptureMeta | null
+  meta: GanttCaptureMeta | null,
+  headerHeightMm: number = 16
 ) {
   const margin = 10;
-  const topMargin = 16; // reserva espaço pro título, só desenhado na 1ª página
+  const topMargin = headerHeightMm; // reserva espaço pro cabeçalho (logo + dados), só desenhado na 1ª página
   const usableWidth = paper.w - margin * 2;
   const usableHeight = paper.h - topMargin - margin;
 
@@ -232,7 +239,23 @@ interface GanttChartProps {
   onDateChange?: (task: Task, start: Date, end: Date) => void;
   // Título usado no cabeçalho do PDF exportado (ex: nome do orçamento/projeto)
   exportTitle?: string;
+  // Dados pro cabeçalho corporativo (logo + painel) nos PDFs/Excel
+  // exportados — mesmo estilo do PDF do orçamento. Sem isso, exporta sem
+  // logo (fallback pro logo padrão da EG) e sem painel de proprietário.
+  companyInfo?: CorporateCompanyInfo;
+  clientInfo?: CorporateClientInfo | null;
+  budgetCode?: string;
 }
+
+const EMPTY_COMPANY_INFO: CorporateCompanyInfo = {
+  companyName: "",
+  cnpj: "",
+  responsibleName: "",
+  responsibleTitle: "",
+  phone: "",
+  email: "",
+  logoUrl: null,
+};
 
 export function GanttChart({
   tasks,
@@ -241,6 +264,9 @@ export function GanttChart({
   onProgressChange,
   onDateChange,
   exportTitle,
+  companyInfo = EMPTY_COMPANY_INFO,
+  clientInfo = null,
+  budgetCode,
 }: GanttChartProps) {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Month);
   const [ganttTasks, setGanttTasks] = useState<Task[]>([]);
@@ -270,6 +296,34 @@ export function GanttChart({
   const [fitMode, setFitMode] = useState<"auto" | "manual">("auto");
   const [manualScale, setManualScale] = useState(100);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Altura (em mm) reservada no topo da 1ª página pro cabeçalho corporativo
+  // (logo + painel de dados) — medida de verdade desenhando o cabeçalho num
+  // jsPDF descartável, já que a altura varia com o quanto de texto cada
+  // campo (endereço, e-mail etc.) ocupa. Usa uma largura de referência (A4
+  // paisagem) só pra medir; papéis mais largos quebram menos linha, então
+  // essa altura tende a sobrar um pouco em vez de faltar — nunca o
+  // contrário.
+  const [headerHeightMm, setHeaderHeightMm] = useState(16);
+
+  const headerOpts = {
+    documentLabel: "CRONOGRAMA — GRÁFICO DE GANTT",
+    mainTitle: exportTitle || "Orçamento",
+    companyInfo,
+    clientInfo,
+    budgetCode,
+  };
+
+  const measureHeaderHeight = async (): Promise<number> => {
+    try {
+      const { default: jsPDF } = await import("jspdf");
+      const measureDoc = new jsPDF({ orientation: "landscape", unit: "mm", format: [297, 210] });
+      return await drawPdfCorporateHeader(measureDoc, headerOpts);
+    } catch (error) {
+      console.warn("Não foi possível medir a altura do cabeçalho, usando o padrão:", error);
+      return 16;
+    }
+  };
 
   useEffect(() => {
     // Converter GanttTask para Task (formato da biblioteca)
@@ -555,9 +609,10 @@ export function GanttChart({
     setCapturedCanvas(null);
     setCapturedMeta(null);
     try {
-      const result = await captureGanttCanvas();
+      const [result, headerH] = await Promise.all([captureGanttCanvas(), measureHeaderHeight()]);
       setCapturedCanvas(result?.canvas ?? null);
       setCapturedMeta(result?.meta ?? null);
+      setHeaderHeightMm(headerH);
     } catch (err) {
       console.error("Erro ao preparar pré-visualização do PDF do Gantt:", err);
       toast.error("Erro ao preparar a pré-visualização do PDF.");
@@ -576,7 +631,7 @@ export function GanttChart({
     try {
       const { default: jsPDF } = await import("jspdf");
       const paper = PAPER_SIZES[paperSize];
-      const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale, capturedMeta);
+      const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale, capturedMeta, headerHeightMm);
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [paper.w, paper.h] });
 
       let isFirstPage = true;
@@ -605,12 +660,7 @@ export function GanttChart({
 
           const topY = isFirstPage ? layout.topMargin : layout.margin;
           if (isFirstPage) {
-            doc.setFontSize(14);
-            doc.text("Cronograma — Gráfico de Gantt", layout.margin, 10);
-            if (exportTitle) {
-              doc.setFontSize(9);
-              doc.text(exportTitle, layout.margin, 14);
-            }
+            await drawPdfCorporateHeader(doc, headerOpts);
           }
           doc.addImage(sliceCanvas, "PNG", layout.margin, topY, winWmm, winHmm);
 
@@ -671,9 +721,6 @@ export function GanttChart({
       const colWidth = EXCEL_GRANULARITY_COL_WIDTH[excelGranularity];
 
       const COL_START = 4; // A=Atividade, B=Início, C=Término, D em diante = colunas de tempo
-      const HEADER_GROUP_ROW = 3;
-      const HEADER_UNIT_ROW = 4;
-      const FIRST_TASK_ROW = 5;
 
       const hexToArgb = (hex?: string, fallback = "FF60A5FA") => {
         if (!hex) return fallback;
@@ -685,17 +732,18 @@ export function GanttChart({
         type === "project" ? "FF1E3A8A" : type === "milestone" ? "FF111827" : "FF60A5FA";
 
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet("Cronograma", {
-        views: [{ state: "frozen", xSplit: COL_START - 1, ySplit: HEADER_UNIT_ROW }],
-      });
+      const worksheet = workbook.addWorksheet("Cronograma");
 
-      // Título
-      worksheet.getCell(1, 1).value = "Cronograma — Gráfico de Gantt";
-      worksheet.getCell(1, 1).font = { bold: true, size: 14 };
-      if (exportTitle) {
-        worksheet.getCell(2, 1).value = exportTitle;
-        worksheet.getCell(2, 1).font = { size: 10, color: { argb: "FF666666" } };
-      }
+      // Cabeçalho corporativo (logo + painel) — mesmo estilo em todos os
+      // documentos exportados fora do orçamento principal.
+      const headerStartRow = await addExcelCorporateHeader(workbook, worksheet, {
+        ...headerOpts,
+        fillWidthCols: COL_START - 1 + buckets.length,
+      });
+      const HEADER_GROUP_ROW = headerStartRow;
+      const HEADER_UNIT_ROW = headerStartRow + 1;
+      const FIRST_TASK_ROW = headerStartRow + 2;
+      worksheet.views = [{ state: "frozen", xSplit: COL_START - 1, ySplit: HEADER_UNIT_ROW }];
 
       // Cabeçalhos fixos (Atividade / Início / Término)
       worksheet.getCell(HEADER_UNIT_ROW, 1).value = "Atividade";
@@ -803,7 +851,7 @@ export function GanttChart({
   useEffect(() => {
     if (!capturedCanvas || !previewCanvasRef.current) return;
     const paper = PAPER_SIZES[paperSize];
-    const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale, capturedMeta);
+    const layout = computePdfLayout(capturedCanvas, paper, fitMode, manualScale, capturedMeta, headerHeightMm);
     const previewCanvas = previewCanvasRef.current;
     const ctx = previewCanvas.getContext("2d");
     if (!ctx) return;
@@ -849,13 +897,13 @@ export function GanttChart({
         ctx.drawImage(capturedCanvas, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
 
         if (r === 0 && c === 0) {
-          ctx.fillStyle = "#111827";
-          ctx.font = `${Math.max(8, 5 * pxPerMm)}px sans-serif`;
-          ctx.fillText("Cronograma — Gráfico de Gantt", pageXpx + layout.margin * pxPerMm, pageYpx + 6 * pxPerMm);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = `${Math.max(7, 4 * pxPerMm)}px sans-serif`;
+          ctx.fillText("(cabeçalho com logo)", pageXpx + layout.margin * pxPerMm, pageYpx + 6 * pxPerMm);
         }
       }
     }
-  }, [capturedCanvas, capturedMeta, paperSize, fitMode, manualScale, exportTitle]);
+  }, [capturedCanvas, capturedMeta, paperSize, fitMode, manualScale, exportTitle, headerHeightMm]);
 
   if (ganttTasks.length === 0) {
     return (
@@ -1010,7 +1058,7 @@ export function GanttChart({
               )}
 
               {capturedCanvas && (() => {
-                const layout = computePdfLayout(capturedCanvas, PAPER_SIZES[paperSize], fitMode, manualScale, capturedMeta);
+                const layout = computePdfLayout(capturedCanvas, PAPER_SIZES[paperSize], fitMode, manualScale, capturedMeta, headerHeightMm);
                 const totalPages = layout.rows * layout.cols;
                 return (
                   <p className="text-xs text-muted-foreground border-t pt-3">

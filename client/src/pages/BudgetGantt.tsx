@@ -16,6 +16,7 @@ import ExcelJS from "exceljs";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Task } from "gantt-task-react";
+import { drawPdfCorporateHeader, addExcelCorporateHeader } from "@/lib/documentHeader";
 
 interface BudgetGanttProps {
   // Totais por etapa já calculados com a fórmula de BDI correta (a mesma
@@ -41,6 +42,25 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const { data: budget } = trpc.budgets.get.useQuery({ id: budgetId });
   const { data: stagesData, refetch: refetchStages } = trpc.budgets.getStages.useQuery({ budgetId });
   const stages = stagesData || [];
+
+  // Empresa (logo, CNPJ, responsável...) e cliente/proprietário da obra —
+  // usados só pro cabeçalho corporativo dos PDFs/Excel exportados aqui
+  // (Cronograma e Desembolso), mesmo painel já usado no PDF do orçamento.
+  const { data: companySettings } = trpc.companySettings.get.useQuery();
+  const { data: clientsList } = trpc.clients.list.useQuery();
+  const budgetClient = clientsList?.find((c: any) => c.id === (budget as any)?.clientId) || null;
+  const headerCompanyInfo = {
+    companyName: companySettings?.companyName || "",
+    cnpj: companySettings?.cnpj || "",
+    responsibleName: companySettings?.responsibleName || "",
+    responsibleTitle: companySettings?.responsibleTitle || "",
+    phone: companySettings?.phone || "",
+    email: companySettings?.email || "",
+    logoUrl: companySettings?.logoUrl || null,
+  };
+  const headerClientInfo = budgetClient
+    ? { name: budgetClient.name, address: budgetClient.address || null }
+    : null;
 
   // Valor total (com BDI) de uma etapa: prioriza o total vindo da aba
   // "Comp. BDI" (fórmula correta, com adminCentral e overrides por item)
@@ -278,15 +298,26 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const handleExportExcel = async () => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Cronograma de Desembolso");
-    
+
     const allMonths = getAllMonths();
-    
-    // Cabeçalho
+
+    // Cabeçalho corporativo (logo + painel) — mesmo estilo do Cronograma.
+    await addExcelCorporateHeader(workbook, worksheet, {
+      documentLabel: "CRONOGRAMA DE DESEMBOLSO",
+      mainTitle: budget?.project?.name || "Orçamento",
+      subtitle: budget?.title,
+      companyInfo: headerCompanyInfo,
+      clientInfo: headerClientInfo,
+      budgetCode: (budget as any)?.code,
+      fillWidthCols: allMonths.length + 2,
+    });
+
+    // Cabeçalho da tabela
     const headers = ["Atividade", ...allMonths, "Total"];
     worksheet.addRow(headers);
-    
+
     // Estilizar cabeçalho
-    const headerRow = worksheet.getRow(1);
+    const headerRow = worksheet.lastRow!;
     headerRow.font = { bold: true };
     headerRow.fill = {
       type: "pattern",
@@ -354,15 +385,18 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   };
   
   // Exportar para PDF
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     const doc = new jsPDF("landscape");
-    
-    // Título
-    doc.setFontSize(16);
-    doc.text("Cronograma de Desembolso", 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Projeto: ${budget?.project?.name || "Orçamento"}`, 14, 22);
-    
+
+    const headerBottomY = await drawPdfCorporateHeader(doc, {
+      documentLabel: "CRONOGRAMA DE DESEMBOLSO",
+      mainTitle: budget?.project?.name || "Orçamento",
+      subtitle: budget?.title,
+      companyInfo: headerCompanyInfo,
+      clientInfo: headerClientInfo,
+      budgetCode: (budget as any)?.code,
+    });
+
     const allMonths = getAllMonths();
     
     // Preparar dados para tabela
@@ -402,7 +436,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     autoTable(doc, {
       head: headers,
       body: rows,
-      startY: 28,
+      startY: headerBottomY,
       styles: { fontSize: 5.5, cellPadding: 1, halign: "right", valign: "middle", overflow: "linebreak" },
       headStyles: { fillColor: [211, 211, 211], textColor: [0, 0, 0], fontStyle: "bold", fontSize: 5.5, halign: "center" },
       footStyles: { fillColor: [179, 217, 255], textColor: [0, 0, 0], fontStyle: "bold" },
@@ -1325,6 +1359,9 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
             tasks={ganttTasks}
             onDateChange={handleDateChange}
             exportTitle={budget?.project?.name || "Orçamento"}
+            companyInfo={headerCompanyInfo}
+            clientInfo={headerClientInfo}
+            budgetCode={(budget as any)?.code}
           />
         </CardContent>
       </Card>
