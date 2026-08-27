@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -1404,12 +1404,27 @@ export default function HierarchicalBudgetView({
   // cabeçalho azul de cada linha) — é assim que o Cronograma de Desembolso
   // (aba Gantt) consegue mostrar exatamente o mesmo valor desta tabela, sem
   // recalcular BDI numa fórmula separada.
+  //
+  // IMPORTANTE: "items" (e às vezes "stages") chegam do componente pai
+  // recém-computados a cada render (ex.: um .map() inline), então a
+  // referência muda mesmo quando os valores não mudam. Sem a comparação
+  // abaixo, isso causava loop infinito: efeito roda -> chama onStageTotals
+  // -> pai atualiza estado -> pai re-renderiza -> novo array de "items" ->
+  // efeito roda de novo -> ... ("Maximum update depth exceeded" / erro
+  // React #185 ao abrir a aba Comp. BDI). Só chama onStageTotals quando os
+  // totais calculados de fato mudaram.
+  const lastStageTotalsRef = useRef<string>("");
   useEffect(() => {
     if (!onStageTotals) return;
     const totals: Record<number, number> = {};
     for (const stage of stages) {
-      totals[stage.id] = calculateStageTotal(stage.id);
+      // Arredondar pra 2 casas evita "mudança" só por ruído de ponto
+      // flutuante entre um cálculo e outro com os mesmos valores de entrada.
+      totals[stage.id] = Math.round(calculateStageTotal(stage.id) * 100) / 100;
     }
+    const serialized = JSON.stringify(totals);
+    if (serialized === lastStageTotalsRef.current) return;
+    lastStageTotalsRef.current = serialized;
     onStageTotals(totals);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stages, items, bdiConfigs, customCosts, includeMaterial]);
