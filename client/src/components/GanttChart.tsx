@@ -148,8 +148,12 @@ export function GanttChart({
     }
     setIsExportingPdf(true);
     try {
+      // html2canvas-pro (não o html2canvas original): o projeto usa cores
+      // modernas (oklch/oklab/color-mix) no CSS, que o html2canvas 1.4.1 não
+      // sabe interpretar e travava a exportação com erro. O -pro é o mesmo
+      // pacote com suporte a essas funções de cor, mesma API.
       const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import("html2canvas"),
+        import("html2canvas-pro"),
         import("jspdf"),
       ]);
 
