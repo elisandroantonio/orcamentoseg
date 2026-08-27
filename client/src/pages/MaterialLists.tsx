@@ -242,7 +242,7 @@ export default function MaterialLists() {
 
         {/* Dialog: Criar nova lista */}
         <Dialog open={createOpen} onOpenChange={(open) => { if (!open) { setCreateOpen(false); setSelectedBudgetIds([]); setForm({ name: "", description: "" }); } }}>
-          <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-3xl md:max-w-5xl lg:max-w-6xl w-[95vw] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Nova Lista de Materiais</DialogTitle>
             </DialogHeader>
