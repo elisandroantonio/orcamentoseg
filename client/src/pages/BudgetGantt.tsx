@@ -89,6 +89,22 @@ export default function BudgetGantt() {
     return map;
   }, [orderedStages]);
 
+  // Cronograma de Desembolso: por padrão mostra etapas E sub-etapas como
+  // linhas separadas — mas o valor de uma etapa-mãe já inclui o de suas
+  // sub-etapas (é assim que o total da etapa é calculado no orçamento), então
+  // somar a linha da mãe E as linhas das filhas duplica o valor. Esse toggle
+  // deixa só as etapas principais (raiz) na tabela/exportações, evitando a
+  // duplicação — útil quando o desembolso é distribuído no nível da etapa,
+  // não da sub-etapa.
+  const [desembolsoSoEtapas, setDesembolsoSoEtapas] = useState(false);
+  const desembolsoStages = useMemo(
+    () =>
+      stages
+        .filter((stage: any) => stage.startDate && stage.endDate)
+        .filter((stage: any) => !desembolsoSoEtapas || !stage.parentStageId),
+    [stages, desembolsoSoEtapas]
+  );
+
   const [ganttTasks, setGanttTasks] = useState<GanttTask[]>([]);
   const [selectedStageId, setSelectedStageId] = useState<number | null>(null);
   const [stageStartDate, setStageStartDate] = useState("");
@@ -262,9 +278,7 @@ export default function BudgetGantt() {
     };
     
     // Dados das atividades
-    stages
-      .filter((stage: any) => stage.startDate && stage.endDate)
-      .forEach((stage: any) => {
+    desembolsoStages.forEach((stage: any) => {
         const row = [stage.name];
         allMonths.forEach((month) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
@@ -275,20 +289,18 @@ export default function BudgetGantt() {
         row.push(total);
         worksheet.addRow(row);
       });
-    
+
     // Linha de totais
     const totalRow = ["Total Mensal"];
     allMonths.forEach((month) => {
-      const total = stages
-        .filter((stage: any) => stage.startDate && stage.endDate)
+      const total = desembolsoStages
         .reduce((sum: number, stage: any) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
           return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
         }, 0);
       totalRow.push(total as any);
     });
-    const grandTotal = stages
-      .filter((stage: any) => stage.startDate && stage.endDate)
+    const grandTotal = desembolsoStages
       .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0);
     totalRow.push(grandTotal as any);
     worksheet.addRow(totalRow);
@@ -340,9 +352,7 @@ export default function BudgetGantt() {
     const headers = [["Atividade", ...allMonths, "Total"]];
     const rows: any[] = [];
     
-    stages
-      .filter((stage: any) => stage.startDate && stage.endDate)
-      .forEach((stage: any) => {
+    desembolsoStages.forEach((stage: any) => {
         const row = [stage.name];
         allMonths.forEach((month) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
@@ -353,20 +363,18 @@ export default function BudgetGantt() {
         row.push(`R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
         rows.push(row);
       });
-    
+
     // Linha de totais
     const totalRow = ["Total Mensal"];
     allMonths.forEach((month) => {
-      const total = stages
-        .filter((stage: any) => stage.startDate && stage.endDate)
+      const total = desembolsoStages
         .reduce((sum: number, stage: any) => {
           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
           return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
         }, 0);
       totalRow.push(`R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
     });
-    const grandTotal = stages
-      .filter((stage: any) => stage.startDate && stage.endDate)
+    const grandTotal = desembolsoStages
       .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0);
     totalRow.push(`R$ ${grandTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
     rows.push(totalRow);
@@ -1260,15 +1268,26 @@ export default function BudgetGantt() {
                 Visão consolidada de todas as atividades e valores mensais
               </CardDescription>
             </div>
-            <div className="flex gap-2">
-              <Button onClick={handleExportExcel} variant="outline" size="sm">
-                <FileDown className="h-4 w-4 mr-2" />
-                Exportar Excel
-              </Button>
-              <Button onClick={handleExportPDF} variant="outline" size="sm">
-                <FileDown className="h-4 w-4 mr-2" />
-                Exportar PDF
-              </Button>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-input"
+                  checked={desembolsoSoEtapas}
+                  onChange={(e) => setDesembolsoSoEtapas(e.target.checked)}
+                />
+                Mostrar só etapas principais (evita duplicar valor das sub-etapas)
+              </label>
+              <div className="flex gap-2">
+                <Button onClick={handleExportExcel} variant="outline" size="sm">
+                  <FileDown className="h-4 w-4 mr-2" />
+                  Exportar Excel
+                </Button>
+                <Button onClick={handleExportPDF} variant="outline" size="sm">
+                  <FileDown className="h-4 w-4 mr-2" />
+                  Exportar PDF
+                </Button>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -1287,14 +1306,18 @@ export default function BudgetGantt() {
                 </tr>
               </thead>
               <tbody>
-                {stages
-                  .filter((stage: any) => stage.startDate && stage.endDate)
-                  .map((stage: any) => {
+                {desembolsoStages.map((stage: any) => {
                     const stageMonths = generateMonthsForStage(stage);
                     return (
                       <tr key={stage.id} className="border-t hover:bg-muted/50">
                         <td className="p-2 font-medium sticky left-0 bg-background">
-                          {stage.name}
+                          <span
+                            style={{ paddingLeft: (stageDepth.get(stage.id) || 0) * 16 }}
+                            className="inline-flex items-center"
+                          >
+                            {(stageDepth.get(stage.id) || 0) > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                            {stage.name}
+                          </span>
                         </td>
                         {getAllMonths().map((month) => {
                           const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
@@ -1329,8 +1352,7 @@ export default function BudgetGantt() {
                 <tr className="border-t-2 bg-blue-100 font-bold">
                   <td className="p-2 sticky left-0 bg-blue-100">Total Mensal</td>
                   {getAllMonths().map((month) => {
-                    const total = stages
-                      .filter((stage: any) => stage.startDate && stage.endDate)
+                    const total = desembolsoStages
                       .reduce((sum: number, stage: any) => {
                         const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
                         return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
@@ -1345,8 +1367,7 @@ export default function BudgetGantt() {
                   })}
                   <td className="text-right p-2">
                     R${" "}
-                    {stages
-                      .filter((stage: any) => stage.startDate && stage.endDate)
+                    {desembolsoStages
                       .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0)
                       .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </td>
@@ -1369,18 +1390,19 @@ export default function BudgetGantt() {
           {(() => {
             const allMonths = getAllMonths();
             let accumulated = 0;
-            const totalBudget = stages
-              .filter((stage: any) => stage.startDate && stage.endDate)
+            // Mesma base da tabela de Desembolso acima (respeita o toggle
+            // "só etapas principais"), pra não duplicar valor de sub-etapa
+            // no total acumulado.
+            const totalBudget = desembolsoStages
               .reduce((sum: number, stage: any) => sum + parseFloat(stage.totalWithBdi || "0"), 0);
-            
+
             const curveSData = allMonths.map((month) => {
-              const monthlyTotal = stages
-                .filter((stage: any) => stage.startDate && stage.endDate)
+              const monthlyTotal = desembolsoStages
                 .reduce((sum: number, stage: any) => {
                   const percent = monthlyDistribution[`${stage.id}-${month}`] || 0;
                   return sum + (percent * parseFloat(stage.totalWithBdi || "0")) / 100;
                 }, 0);
-              
+
               accumulated += monthlyTotal;
               const percentage = totalBudget > 0 ? (accumulated / totalBudget) * 100 : 0;
               
