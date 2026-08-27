@@ -58,7 +58,9 @@ export default function BudgetGantt() {
         const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
         const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
         if (aTime !== bTime) return aTime - bTime;
-        return (a.order || 0) - (b.order || 0) || a.id - b.id;
+        // scheduleOrder é a ordem do Gantt (nunca o `order` da planilha do
+        // orçamento — esse número não deve mudar por causa do cronograma).
+        return (a.scheduleOrder ?? a.order ?? 0) - (b.scheduleOrder ?? b.order ?? 0) || a.id - b.id;
       });
     }
     const result: any[] = [];
@@ -474,10 +476,11 @@ export default function BudgetGantt() {
   useEffect(() => {
     const tasks: GanttTask[] = [];
     
-    const sortedStages = [...stages]
-      .filter((stage: any) => stage.startDate && stage.endDate)
-      .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
-    
+    // orderedStages já vem em pré-ordem de árvore (etapa + suas sub-etapas)
+    // e ordenado por Data de Início dentro de cada grupo — não precisa
+    // reordenar de novo aqui, e evita depender do `order` da planilha.
+    const sortedStages = orderedStages.filter((stage: any) => stage.startDate && stage.endDate);
+
     sortedStages.forEach((stage: any) => {
       // Adicionar a etapa como tarefa principal
       tasks.push({
@@ -544,7 +547,7 @@ export default function BudgetGantt() {
     });
     
     setGanttTasks(tasks);
-  }, [stages]);
+  }, [orderedStages]);
 
   // Calcular duração automaticamente quando datas mudam
   useEffect(() => {

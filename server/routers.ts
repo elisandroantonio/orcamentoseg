@@ -1476,20 +1476,26 @@ export const appRouter = router({
         // Verificar se o orçamento pertence ao usuário
         const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
         if (!budget) throw new Error("Budget not found");
-        
+
+        // Garante que scheduleOrder está populado/atualizado antes de ler —
+        // essa ação SÓ mexe em scheduleOrder (ordem no Gantt), nunca em
+        // `order` (número da etapa na planilha do orçamento).
+        await db.normalizeStageOrder(input.budgetId);
+
         // Buscar a etapa atual para saber seu parentStageId
         const [currentStageRow] = await database
           .select()
           .from(budgetStages)
           .where(eq(budgetStages.id, input.stageId));
         if (!currentStageRow) throw new Error("Stage not found");
-        
-        // Buscar APENAS os irmãos (mesma etapa pai) ordenados por order, id.
-        // Restringe a etapas COM data configurada — é exatamente o mesmo
-        // filtro usado na tabela "Etapas Configuradas" de onde essa ação é
-        // disparada. Sem essa restrição, o "irmão" encontrado podia ser uma
-        // etapa sem data (invisível na tela), fazendo o botão "trocar de
-        // lugar" com algo que o usuário nem vê — parecendo que não fez nada.
+
+        // Buscar APENAS os irmãos (mesma etapa pai) ordenados por
+        // scheduleOrder, id. Restringe a etapas COM data configurada — é
+        // exatamente o mesmo filtro usado na tabela "Etapas Configuradas" de
+        // onde essa ação é disparada. Sem essa restrição, o "irmão"
+        // encontrado podia ser uma etapa sem data (invisível na tela),
+        // fazendo o botão "trocar de lugar" com algo que o usuário nem vê —
+        // parecendo que não fez nada.
         const siblingsFilter = currentStageRow.parentStageId
           ? and(
               eq(budgetStages.budgetId, input.budgetId),
@@ -1507,46 +1513,44 @@ export const appRouter = router({
           .select()
           .from(budgetStages)
           .where(siblingsFilter)
-          .orderBy(budgetStages.order, budgetStages.id);
+          .orderBy(budgetStages.scheduleOrder, budgetStages.id);
 
         // Encontrar o índice da etapa atual entre os irmãos
         const currentIndex = siblings.findIndex(s => s.id === input.stageId);
         if (currentIndex === -1) throw new Error("Stage not found among siblings");
-        
+
         // Determinar o irmão com o qual trocar
         const swapIndex = input.direction === "up" ? currentIndex - 1 : currentIndex + 1;
         if (swapIndex < 0 || swapIndex >= siblings.length) {
           return { success: true, message: "Already at boundary" };
         }
-        
-        const currentStage = siblings[currentIndex];
-        const swapStage = siblings[swapIndex];
-        
-        // Normalizar os valores de order entre os irmãos para garantir unicidade
+
+        // Renumerar scheduleOrder de todos os irmãos sequencialmente (0..N-1)
+        // e então trocar os dois envolvidos — garante valores únicos mesmo
+        // que scheduleOrder tenha ficado com empates.
         for (let i = 0; i < siblings.length; i++) {
-          if (siblings[i].order !== i) {
+          if (siblings[i].scheduleOrder !== i) {
             await database
               .update(budgetStages)
-              .set({ order: i })
+              .set({ scheduleOrder: i })
               .where(eq(budgetStages.id, siblings[i].id));
-            siblings[i] = { ...siblings[i], order: i };
+            siblings[i] = { ...siblings[i], scheduleOrder: i };
           }
         }
-        
-        // Trocar os valores de order (agora únicos e sequenciais entre irmãos)
+
         const normalizedCurrent = siblings[currentIndex];
         const normalizedSwap = siblings[swapIndex];
-        
+
         await database
           .update(budgetStages)
-          .set({ order: normalizedSwap.order })
+          .set({ scheduleOrder: normalizedSwap.scheduleOrder })
           .where(eq(budgetStages.id, normalizedCurrent.id));
-        
+
         await database
           .update(budgetStages)
-          .set({ order: normalizedCurrent.order })
+          .set({ scheduleOrder: normalizedCurrent.scheduleOrder })
           .where(eq(budgetStages.id, normalizedSwap.id));
-        
+
         return { success: true };
       }),
     
@@ -1563,6 +1567,11 @@ export const appRouter = router({
         // Verificar se o orçamento pertence ao usuário
         const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
         if (!budget) throw new Error("Budget not found");
+
+        // Garante que scheduleOrder está populado/atualizado antes de ler —
+        // essa ação SÓ mexe em scheduleOrder (ordem no Gantt), nunca em
+        // `order` (número da etapa na planilha do orçamento).
+        await db.normalizeStageOrder(input.budgetId);
 
         const [currentStageRow] = await database
           .select()
@@ -1595,7 +1604,7 @@ export const appRouter = router({
           .select()
           .from(budgetStages)
           .where(siblingsFilter)
-          .orderBy(budgetStages.order, budgetStages.id);
+          .orderBy(budgetStages.scheduleOrder, budgetStages.id);
 
         // Encontrar a etapa atual entre as irmãs
         const currentIndex = siblings.findIndex(s => s.id === input.stageId);
@@ -1615,14 +1624,14 @@ export const appRouter = router({
         const [movedStage] = siblings.splice(currentIndex, 1);
         siblings.splice(input.targetPosition, 0, movedStage);
 
-        // Grava a nova ordem das irmãs afetadas numa única query (CASE WHEN)
+        // Grava o novo scheduleOrder das irmãs afetadas numa única query (CASE WHEN)
         const caseSql = siblings.map(() => `WHEN ? THEN ?`).join(' ');
         const caseParams: any[] = [];
         siblings.forEach((s, i) => caseParams.push(s.id, i));
         const ids = siblings.map((s) => s.id);
         const inSql = ids.map(() => '?').join(',');
         await db.rawQuery(
-          `UPDATE budget_stages SET \`order\` = CASE id ${caseSql} END WHERE id IN (${inSql})`,
+          `UPDATE budget_stages SET scheduleOrder = CASE id ${caseSql} END WHERE id IN (${inSql})`,
           [...caseParams, ...ids]
         );
 

@@ -35,6 +35,10 @@ async function runSafeMigrations() {
     // Adicionar includeMaterial na tabela budgets se não existir
     await rawQuery(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS includeMaterial tinyint NOT NULL DEFAULT 1`);
     console.log('[Migration] includeMaterial column ensured in budgets table');
+    // Ordem de exibição do Gantt, separada do `order` usado na planilha do
+    // orçamento — ver comentário em drizzle/schema.ts.
+    await rawQuery(`ALTER TABLE budget_stages ADD COLUMN IF NOT EXISTS scheduleOrder INT NULL`);
+    console.log('[Migration] scheduleOrder column ensured in budget_stages table');
     // Adicionar laborAdjustment na tabela budget_items se não existir
     await rawQuery(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS laborAdjustment DECIMAL(10,2) NOT NULL DEFAULT 0`);
     console.log('[Migration] laborAdjustment column ensured in budget_items table');

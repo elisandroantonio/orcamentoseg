@@ -203,12 +203,13 @@ export const budgetStages = mysqlTable("budget_stages", {
   parentStageId: int("parentStageId").references((): any => budgetStages.id, { onDelete: "cascade" }), // Sub-etapa
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
-  order: int("order").notNull().default(0),
+  order: int("order").notNull().default(0), // Ordem na ESTRUTURA DO ORÇAMENTO (planilha) — nunca mexer por causa do Gantt
   totalCost: decimal("totalCost", { precision: 15, scale: 2 }).default("0.00").notNull(),
   // Campos para Custo por Unidade de Serviço (ex: R$/m³ de estrutura de concreto armado)
   serviceUnit: varchar("serviceUnit", { length: 20 }), // Unidade de referência: m², m³, kg, m, vb, un, cj, hr
   serviceQuantity: decimal("serviceQuantity", { precision: 15, scale: 4 }), // Quantidade total do serviço
   // Campos para Cronograma Gantt
+  scheduleOrder: int("scheduleOrder"), // Ordem de exibição SÓ no Gantt (independente do `order` da planilha)
   startDate: date("startDate"), // Data de início planejada
   endDate: date("endDate"), // Data de término planejada
   duration: int("duration"), // Duração em dias (calculado automaticamente)

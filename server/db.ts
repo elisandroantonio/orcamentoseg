@@ -477,27 +477,29 @@ export async function recalculateItemTotalCost(budgetItemId: number) {
 }
 
 /**
- * Corrige o campo `order` de todas as etapas/sub-etapas de um orçamento,
- * renumerando em pré-ordem de árvore: cada etapa raiz, seguida imediatamente
- * de suas próprias sub-etapas, antes de passar pra próxima raiz — ou seja,
- * a hierarquia (etapa > sub-etapa) é sempre respeitada.
+ * Corrige o campo `scheduleOrder` de todas as etapas/sub-etapas de um
+ * orçamento — a ordem de exibição usada SÓ na aba Gantt (seletores de
+ * Etapa/Predecessora/Sucessora, tabela "Etapas Configuradas", setas de
+ * mover, dropdown de Posição). Renumera em pré-ordem de árvore: cada etapa
+ * raiz, seguida imediatamente de suas próprias sub-etapas, antes de passar
+ * pra próxima raiz — a hierarquia (etapa > sub-etapa) é sempre respeitada.
+ *
+ * IMPORTANTE: isso NUNCA toca no campo `order` (esse é o número que aparece
+ * na Estrutura do Orçamento/planilha, ex: "3 - BARRILHETE", "3.1 -
+ * PAVIMENTAÇÃO" — reflete a ordem em que o orçamento foi montado, e é
+ * assunto completamente separado do cronograma). Os dois já foram
+ * confundidos numa versão anterior desta função, fazendo a numeração da
+ * planilha mudar sozinha quando o Gantt era reorganizado — por isso agora
+ * são campos diferentes.
  *
  * Dentro de cada grupo de irmãs (todas as etapas raiz entre si, e todas as
  * sub-etapas de uma mesma etapa-mãe entre si), a ordem é decidida pela Data
  * de Início: quem começa mais cedo vem primeiro. Etapas sem data (ou
- * empatadas na mesma data) usam o campo `order` antigo como critério de
- * desempate, só pra manter alguma ordem estável.
+ * empatadas na mesma data) usam o `scheduleOrder`/`order`/`id` anteriores
+ * como critério de desempate, só pra manter alguma ordem estável.
  *
- * A ordenação por data existe porque o campo `order` é um contador global
- * (não reinicia por sub-etapa) e fica sujeito a inconsistência de leitura
- * logo após vários INSERTs seguidos (ex: o SELECT MAX(order) usado ao criar
- * uma etapa não enxergar ainda sub-etapas recém-criadas de outra etapa
- * raiz) — o que podia fazer uma etapa nova aparecer visualmente antes de
- * etapas já lançadas, mesmo tendo sido criada depois E tendo uma data de
- * início mais tardia. Ordenar por data evita depender desse contador nos
- * casos em que ele já ficou fora de sequência. Chamada automaticamente ao
- * final de createStage, então não depende do usuário clicar em
- * "Reorganizar Etapas" pra corrigir isso na hora.
+ * Chamada automaticamente ao final de createStage, então não depende do
+ * usuário clicar em "Reorganizar Etapas" pra corrigir isso na hora.
  */
 export async function normalizeStageOrder(budgetId: number): Promise<void> {
   const database = await getDb();
@@ -508,6 +510,7 @@ export async function normalizeStageOrder(budgetId: number): Promise<void> {
       id: budgetStages.id,
       parentStageId: budgetStages.parentStageId,
       order: budgetStages.order,
+      scheduleOrder: budgetStages.scheduleOrder,
       startDate: budgetStages.startDate,
     })
     .from(budgetStages)
@@ -524,37 +527,37 @@ export async function normalizeStageOrder(budgetId: number): Promise<void> {
       const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
       const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
       if (aTime !== bTime) return aTime - bTime;
-      return (a.order || 0) - (b.order || 0) || a.id - b.id;
+      return (a.scheduleOrder ?? a.order ?? 0) - (b.scheduleOrder ?? b.order ?? 0) || a.id - b.id;
     });
   }
-  const canonicalOrder: { id: number; order: number }[] = [];
+  const canonicalOrder: { id: number; scheduleOrder: number }[] = [];
   const visited = new Set<number>();
   const walk = (parentId: number | null) => {
     for (const child of byParent.get(parentId) || []) {
       if (visited.has(child.id)) continue;
       visited.add(child.id);
-      canonicalOrder.push({ id: child.id, order: canonicalOrder.length });
+      canonicalOrder.push({ id: child.id, scheduleOrder: canonicalOrder.length });
       walk(child.id);
     }
   };
   walk(null);
   for (const s of allStages) {
-    if (!visited.has(s.id)) canonicalOrder.push({ id: s.id, order: canonicalOrder.length });
+    if (!visited.has(s.id)) canonicalOrder.push({ id: s.id, scheduleOrder: canonicalOrder.length });
   }
 
   const changed = canonicalOrder.filter((c) => {
     const original = allStages.find((s) => s.id === c.id);
-    return original && original.order !== c.order;
+    return original && original.scheduleOrder !== c.scheduleOrder;
   });
   if (changed.length === 0) return;
 
   const caseSql = changed.map(() => `WHEN ? THEN ?`).join(' ');
   const caseParams: any[] = [];
-  for (const c of changed) caseParams.push(c.id, c.order);
+  for (const c of changed) caseParams.push(c.id, c.scheduleOrder);
   const ids = changed.map((c) => c.id);
   const inSql = ids.map(() => '?').join(',');
   await rawQuery(
-    `UPDATE budget_stages SET \`order\` = CASE id ${caseSql} END WHERE id IN (${inSql})`,
+    `UPDATE budget_stages SET scheduleOrder = CASE id ${caseSql} END WHERE id IN (${inSql})`,
     [...caseParams, ...ids]
   );
 }
