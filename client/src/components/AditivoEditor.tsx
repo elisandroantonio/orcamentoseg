@@ -40,12 +40,19 @@ function formatCurrency(value: number) {
 function calcItemBdiBreakdown(item: any, bdiMultiplier: number, socialCharges: number) {
   // Respeitar flag includeMaterial por item (0 = material por conta do cliente)
   const rawMaterial = item.materialCost || 0;
-  const material = Number(item.includeMaterial) === 0 ? 0 : rawMaterial;
-  const labor = (item.laborCost || 0) + (item.equipmentCost || 0) + (item.serviceCost || 0) + (item.otherCost || 0);
+  const materialBase = Number(item.includeMaterial) === 0 ? 0 : rawMaterial;
+  const laborBase = (item.laborCost || 0) + (item.equipmentCost || 0) + (item.serviceCost || 0) + (item.otherCost || 0);
+  // Ajuste de Material e M.O. (equalização) — mesmo conceito da aba Comp. BDI,
+  // aplicado antes do multiplicador de BDI.
+  const matAdjMultiplier = 1 + (item.materialAdjustment || 0) / 100;
+  const labAdjMultiplier = 1 + (item.laborAdjustment || 0) / 100;
+  const material = materialBase * matAdjMultiplier;
+  const labor = laborBase * labAdjMultiplier;
   const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
   const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
   const applyMat = Number(item.applyBdiToMaterial) !== 0;
   const applyLab = Number(item.applyBdiToLabor) !== 0;
+  // Compat: mantém incremento/desconto legado, caso existam valores antigos
   const increment = 1 + (item.additionalIncrement || 0) / 100;
   const discount = 1 - (item.discount || 0) / 100;
   const matFinal = applyMat ? material * bdiMultiplier : material;
@@ -398,11 +405,11 @@ export function AditivoEditor({
                   </Button>
                   <Popover open={bdiPopoverItemId === item.id} onOpenChange={(open) => setBdiPopoverItemId(open ? item.id : null)}>
                     <PopoverTrigger asChild>
-                      <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || (item.additionalIncrement && item.additionalIncrement !== '0') || (item.discount && item.discount !== '0')) ? "text-orange-500" : "text-gray-400")}>
+                      <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
                         <SlidersHorizontal className="h-3 w-3" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-64 p-3" align="end">
+                    <PopoverContent className="w-72 p-3" align="end">
                       <div className="space-y-3">
                         <p className="text-xs font-semibold text-gray-700">Configuração de BDI</p>
                         <div className="space-y-2">
@@ -429,14 +436,18 @@ export function AditivoEditor({
                         </div>
                         <div className="space-y-2 pt-1 border-t border-gray-100">
                           <div>
-                            <Label className="text-xs text-gray-500">Incremento Adicional (%)</Label>
-                            <Input type="number" className="h-7 text-xs mt-1" defaultValue={item.additionalIncrement || 0}
-                              onBlur={(e) => updateItem.mutate({ id: item.id, additionalIncrement: parseFloat(e.target.value) || 0 })} />
+                            <Label className="text-xs font-semibold text-blue-700">Ajuste Material (%)</Label>
+                            <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre o Material deste item</p>
+                            <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-blue-300 bg-blue-50 focus-visible:ring-blue-500"
+                              defaultValue={item.materialAdjustment || 0}
+                              onBlur={(e) => updateItem.mutate({ id: item.id, materialAdjustment: parseFloat(e.target.value) || 0 })} />
                           </div>
                           <div>
-                            <Label className="text-xs text-gray-500">Desconto (%)</Label>
-                            <Input type="number" className="h-7 text-xs mt-1" defaultValue={item.discount || 0}
-                              onBlur={(e) => updateItem.mutate({ id: item.id, discount: parseFloat(e.target.value) || 0 })} />
+                            <Label className="text-xs font-semibold text-orange-700">Ajuste M.O. (%)</Label>
+                            <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre a M.O. deste item</p>
+                            <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-orange-300 bg-orange-50 focus-visible:ring-orange-500"
+                              defaultValue={item.laborAdjustment || 0}
+                              onBlur={(e) => updateItem.mutate({ id: item.id, laborAdjustment: parseFloat(e.target.value) || 0 })} />
                           </div>
                         </div>
                       </div>
@@ -599,11 +610,11 @@ export function AditivoEditor({
                     </Button>
                     <Popover open={bdiPopoverItemId === item.id} onOpenChange={(open) => setBdiPopoverItemId(open ? item.id : null)}>
                       <PopoverTrigger asChild>
-                        <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || (item.additionalIncrement && item.additionalIncrement !== '0') || (item.discount && item.discount !== '0')) ? "text-orange-500" : "text-gray-400")}>
+                        <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
                           <SlidersHorizontal className="h-3 w-3" />
                         </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-64 p-3" align="end">
+                      <PopoverContent className="w-72 p-3" align="end">
                         <div className="space-y-3">
                           <p className="text-xs font-semibold text-gray-700">Configuração de BDI</p>
                           <div className="space-y-2">
@@ -630,14 +641,18 @@ export function AditivoEditor({
                           </div>
                           <div className="space-y-2 pt-1 border-t border-gray-100">
                             <div>
-                              <Label className="text-xs text-gray-500">Incremento Adicional (%)</Label>
-                              <Input type="number" className="h-7 text-xs mt-1" defaultValue={item.additionalIncrement || 0}
-                                onBlur={(e) => updateItem.mutate({ id: item.id, additionalIncrement: parseFloat(e.target.value) || 0 })} />
+                              <Label className="text-xs font-semibold text-blue-700">Ajuste Material (%)</Label>
+                              <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre o Material deste item</p>
+                              <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-blue-300 bg-blue-50 focus-visible:ring-blue-500"
+                                defaultValue={item.materialAdjustment || 0}
+                                onBlur={(e) => updateItem.mutate({ id: item.id, materialAdjustment: parseFloat(e.target.value) || 0 })} />
                             </div>
                             <div>
-                              <Label className="text-xs text-gray-500">Desconto (%)</Label>
-                              <Input type="number" className="h-7 text-xs mt-1" defaultValue={item.discount || 0}
-                                onBlur={(e) => updateItem.mutate({ id: item.id, discount: parseFloat(e.target.value) || 0 })} />
+                              <Label className="text-xs font-semibold text-orange-700">Ajuste M.O. (%)</Label>
+                              <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre a M.O. deste item</p>
+                              <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-orange-300 bg-orange-50 focus-visible:ring-orange-500"
+                                defaultValue={item.laborAdjustment || 0}
+                                onBlur={(e) => updateItem.mutate({ id: item.id, laborAdjustment: parseFloat(e.target.value) || 0 })} />
                             </div>
                           </div>
                         </div>

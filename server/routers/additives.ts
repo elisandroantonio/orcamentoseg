@@ -34,7 +34,8 @@ async function recalcAdditiveTotals(additiveId: number) {
   const bdiQuery = 'SELECT ai.materialcost, ai.laborcost, ai.equipmentcost, ai.servicecost, ai.othercost,' +
     ' ai.quantity, ai.unitcost, ai.totalcost,' +
     ' ai.applybditomaterial, ai.applybditolabor, ai.aplicarencargossociais,' +
-    ' ai.additionalincrement, ai.discount, ai.includematerial' +
+    ' ai.additionalincrement, ai.discount, ai.includematerial,' +
+    ' ai.materialadjustment, ai.laboradjustment' +
     ' FROM additive_items ai WHERE ai.additiveid = ?';
   const items = await rawQuery(bdiQuery, [additiveId]);
 
@@ -67,21 +68,27 @@ async function recalcAdditiveTotals(additiveId: number) {
   for (const item of items) {
     const qty = parseFloat(item.quantity || "1");
     
-    // Calcular c/ BDI (mesmo algoritmo do calcItemTotalWithBdi no frontend)
+    // Calcular c/ BDI (mesmo algoritmo do calcItemBdiBreakdown no frontend)
     // TiDB retorna colunas em lowercase
     const rawMaterial = parseFloat(item.materialcost || "0");
     // Respeitar flag includematerial (0 = material por conta do cliente)
-    const material = Number(item.includematerial) === 0 ? 0 : rawMaterial;
-    const labor = parseFloat(item.laborcost || "0")
+    const materialBase = Number(item.includematerial) === 0 ? 0 : rawMaterial;
+    const laborBase = parseFloat(item.laborcost || "0")
                 + parseFloat(item.equipmentcost || "0")
                 + parseFloat(item.servicecost || "0")
                 + parseFloat(item.othercost || "0");
     // totalNoBdi respeita includeMaterial: exclui material se desabilitado
-    totalNoBdi += (material + labor) * qty;
+    totalNoBdi += (materialBase + laborBase) * qty;
+    // Ajuste de Material e M.O. (equalização) — mesmo conceito da aba Comp. BDI
+    const matAdjMultiplier = 1 + parseFloat(item.materialadjustment || "0") / 100;
+    const labAdjMultiplier = 1 + parseFloat(item.laboradjustment || "0") / 100;
+    const material = materialBase * matAdjMultiplier;
+    const labor = laborBase * labAdjMultiplier;
     const aplicarEncargos = Number(item.aplicarencargossociais) !== 0;
     const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
     const applyMat = Number(item.applybditomaterial) !== 0;
     const applyLab = Number(item.applybditolabor) !== 0;
+    // Compat: mantém incremento/desconto legado, caso existam valores antigos
     const increment = 1 + parseFloat(item.additionalincrement || "0") / 100;
     const discount = 1 - parseFloat(item.discount || "0") / 100;
     const matFinal = applyMat ? material * bdiMultiplier : material;
@@ -247,6 +254,8 @@ export const additivesRouter = router({
             totalCost: parseFloat(raw.totalCost || raw.totalcost || "0"),
             additionalIncrement: parseFloat(raw.additionalIncrement || raw.additionalincrement || "0"),
             discount: parseFloat(raw.discount || "0"),
+            materialAdjustment: parseFloat(raw.materialAdjustment || raw.materialadjustment || "0"),
+            laborAdjustment: parseFloat(raw.laborAdjustment || raw.laboradjustment || "0"),
             applyBdiToMaterial: Number(raw.applyBdiToMaterial ?? raw.applybditomaterial ?? 1),
             applyBdiToLabor: Number(raw.applyBdiToLabor ?? raw.applybditolabor ?? 1),
             aplicarEncargosSociais: Number(raw.aplicarEncargosSociais ?? raw.aplicarencargossociais ?? 1),
@@ -416,6 +425,8 @@ export const additivesRouter = router({
       applyBdiToLabor: z.boolean().optional(),
       additionalIncrement: z.number().optional(),
       discount: z.number().optional(),
+      materialAdjustment: z.number().optional(),
+      laborAdjustment: z.number().optional(),
       aplicarEncargosSociais: z.boolean().optional(),
       includeMaterial: z.boolean().optional(),
     }))
@@ -444,6 +455,8 @@ export const additivesRouter = router({
       if (input.applyBdiToLabor !== undefined) { sets.push('applybditolabor = ?'); values.push(input.applyBdiToLabor ? 1 : 0); }
       if (input.additionalIncrement !== undefined) { sets.push('additionalincrement = ?'); values.push(input.additionalIncrement); }
       if (input.discount !== undefined) { sets.push('discount = ?'); values.push(input.discount); }
+      if (input.materialAdjustment !== undefined) { sets.push('materialadjustment = ?'); values.push(input.materialAdjustment); }
+      if (input.laborAdjustment !== undefined) { sets.push('laboradjustment = ?'); values.push(input.laborAdjustment); }
       if (input.aplicarEncargosSociais !== undefined) { sets.push('aplicarencargossociais = ?'); values.push(input.aplicarEncargosSociais ? 1 : 0); }
       if (input.includeMaterial !== undefined) { sets.push('includematerial = ?'); values.push(input.includeMaterial ? 1 : 0); }
       // Recalcular unitCost e totalCost quando custos de componentes ou quantidade mudam

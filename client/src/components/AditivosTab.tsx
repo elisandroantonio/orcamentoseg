@@ -191,16 +191,22 @@ export function AditivosTab({
       // igual ao "s/ BDI".
       const applyBdiToAdditiveItem = (item: any) => {
         const rawMaterial = Number(item.materialCost) || 0;
-        const material = Number(item.includeMaterial) === 0 ? 0 : rawMaterial;
-        const labor =
+        const materialBase = Number(item.includeMaterial) === 0 ? 0 : rawMaterial;
+        const laborBase =
           (Number(item.laborCost) || 0) +
           (Number(item.equipmentCost) || 0) +
           (Number(item.serviceCost) || 0) +
           (Number(item.otherCost) || 0);
+        // Ajuste de Material e M.O. (equalização) — mesmo conceito da aba Comp. BDI
+        const matAdjMultiplier = 1 + (Number(item.materialAdjustment) || 0) / 100;
+        const labAdjMultiplier = 1 + (Number(item.laborAdjustment) || 0) / 100;
+        const material = materialBase * matAdjMultiplier;
+        const labor = laborBase * labAdjMultiplier;
         const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
         const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
         const applyMat = Number(item.applyBdiToMaterial) !== 0;
         const applyLab = Number(item.applyBdiToLabor) !== 0;
+        // Compat: mantém incremento/desconto legado, caso existam valores antigos
         const combinedMultiplier =
           (1 + (Number(item.additionalIncrement) || 0) / 100) * (1 - (Number(item.discount) || 0) / 100);
         const matFinal = (applyMat ? material * bdiMultiplier : material) * combinedMultiplier;

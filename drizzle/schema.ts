@@ -753,8 +753,10 @@ export const additiveItems = mysqlTable("additive_items", {
   // Controle individual de BDI (igual ao orçamento)
   applyBdiToMaterial: tinyint("applyBdiToMaterial").notNull().default(1),
   applyBdiToLabor: tinyint("applyBdiToLabor").notNull().default(1),
-  additionalIncrement: decimal("additionalIncrement", { precision: 7, scale: 2 }).notNull().default("0"),
-  discount: decimal("discount", { precision: 7, scale: 2 }).notNull().default("0"),
+  additionalIncrement: decimal("additionalIncrement", { precision: 7, scale: 2 }).notNull().default("0"), // Mantido por compatibilidade (não usado na UI)
+  discount: decimal("discount", { precision: 7, scale: 2 }).notNull().default("0"), // Mantido por compatibilidade (não usado na UI)
+  materialAdjustment: decimal("materialAdjustment", { precision: 10, scale: 2 }).notNull().default("0"), // % de ajuste sobre Material (ex: 9 = +9%, -5 = -5%)
+  laborAdjustment: decimal("laborAdjustment", { precision: 10, scale: 2 }).notNull().default("0"), // % de ajuste sobre M.O. (ex: 55.4 = +55,4%)
   aplicarEncargosSociais: tinyint("aplicarEncargosSociais").notNull().default(1),
   includeMaterial: tinyint("includeMaterial").notNull().default(1), // 1 = incluir material, 0 = material por conta do cliente
   createdAt: timestamp("createdAt").defaultNow().notNull(),
