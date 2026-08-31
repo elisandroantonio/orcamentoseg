@@ -513,7 +513,7 @@ export default function MaterialListView({ params }: { params: { id: string } })
               variant="outline"
               size="sm"
               className="gap-1.5 h-8 text-xs"
-              onClick={() => exportToExcel(list, grouped, summary, grandTotal)}
+              onClick={() => exportToExcel(list, summaryByCategory, grandTotal)}
             >
               <Download className="h-3.5 w-3.5" />
               Excel
@@ -522,7 +522,7 @@ export default function MaterialListView({ params }: { params: { id: string } })
               variant="outline"
               size="sm"
               className="gap-1.5 h-8 text-xs"
-              onClick={() => exportToPdf(list, grouped, summary, grandTotal)}
+              onClick={() => exportToPdf(list, summaryByCategory, grandTotal)}
             >
               <FileText className="h-3.5 w-3.5" />
               PDF
@@ -1031,177 +1031,240 @@ export default function MaterialListView({ params }: { params: { id: string } })
   );
 }
 
-// ─── Exportação Excel ─────────────────────────────────────────────────────────
-function exportToExcel(list: any, grouped: any[], summary: any[], grandTotal: number) {
+// ─── Exportação Excel — Resumo Geral (pronto pra cotação com fornecedores) ────
+const EXCEL_HEADER_FILL = "FF1F2937"; // slate-800
+const EXCEL_CATEGORY_FILL = "FFDCEAFB"; // blue-100
+const EXCEL_CATEGORY_TEXT = "FF1D4ED8"; // blue-700
+const EXCEL_SUBTOTAL_FILL = "FFF3F4F6"; // gray-100
+const EXCEL_TOTAL_FILL = "FF2563EB"; // blue-600
+const EXCEL_ZEBRA_FILL = "FFF9FAFB"; // gray-50
+const EXCEL_BORDER_COLOR = "FFE5E7EB"; // gray-200
+
+async function exportToExcel(list: any, summaryByCategory: any[], grandTotal: number) {
   try {
-    import("xlsx").then((XLSX) => {
-      const wb = XLSX.utils.book_new();
-
-      for (const budgetGroup of grouped) {
-        const rows: any[][] = [];
-        rows.push([`Lista: ${list.name}`]);
-        rows.push([`Orçamento: ${budgetGroup.budgetTitle}`]);
-        rows.push([]);
-        rows.push(["Cód. SINAPI", "Descrição", "UN", "Quantidade", "Custo Unit. (R$)", "Custo Total (R$)", "Etapa"]);
-
-        for (const stage of budgetGroup.stages) {
-          for (const item of stage.items) {
-            rows.push([
-              item.sinapiCode || "",
-              item.description,
-              item.unit,
-              parseFloat(item.quantity),
-              parseFloat(item.unitCost),
-              parseFloat(item.totalCost),
-              stage.stageName,
-            ]);
-          }
-          const stageTotal = stage.items.reduce((acc: number, i: any) => acc + parseFloat(i.totalCost || "0"), 0);
-          rows.push(["", `Subtotal — ${stage.stageName}`, "", "", "", stageTotal, ""]);
-          rows.push([]);
-        }
-
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-        const safeName = budgetGroup.budgetTitle.replace(/[\\/:*?[\]]/g, "").substring(0, 31);
-        XLSX.utils.book_append_sheet(wb, ws, safeName);
-      }
-
-      // Aba de resumo geral
-      const summaryRows: any[][] = [
-        [`Resumo Geral — ${list.name}`],
-        [],
-        ["Cód. SINAPI", "Descrição", "UN", "Qtde Total", "Custo Unit. (R$)", "Custo Total (R$)"],
-      ];
-      for (const item of summary) {
-        summaryRows.push([
-          item.sinapiCode || "",
-          item.description,
-          item.unit,
-          item.quantity,
-          item.unitCost,
-          item.totalCost,
-        ]);
-      }
-      summaryRows.push([]);
-      summaryRows.push(["", "TOTAL GERAL", "", "", "", grandTotal]);
-
-      const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
-      XLSX.utils.book_append_sheet(wb, wsSummary, "Resumo Geral");
-
-      XLSX.writeFile(wb, `${list.name}.xlsx`);
-      toast.success("Excel gerado com sucesso!");
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Plataforma de Orçamentos";
+    wb.created = new Date();
+    const ws = wb.addWorksheet("Resumo Geral", {
+      views: [{ state: "frozen", ySplit: 6 }],
+      pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
     });
-  } catch {
-    toast.error("Erro ao gerar Excel. Verifique se a biblioteca está disponível.");
+
+    const COLS = [
+      { header: "Cód. SINAPI", width: 14 },
+      { header: "Descrição", width: 52 },
+      { header: "UN", width: 8 },
+      { header: "Qtde Total", width: 14 },
+      { header: "Compra Sugerida", width: 20 },
+      { header: "Custo Unit. (R$)", width: 16 },
+      { header: "Custo Total (R$)", width: 18 },
+    ];
+    ws.columns = COLS.map((c) => ({ width: c.width }));
+
+    const thinBorder = { style: "thin" as const, color: { argb: EXCEL_BORDER_COLOR } };
+    const fullBorder = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+
+    // Título
+    ws.mergeCells(1, 1, 1, COLS.length);
+    const titleCell = ws.getCell(1, 1);
+    titleCell.value = `Lista de Materiais — ${list.name}`;
+    titleCell.font = { bold: true, size: 15, color: { argb: "FF111827" } };
+    titleCell.alignment = { vertical: "middle" };
+    ws.getRow(1).height = 26;
+
+    ws.mergeCells(2, 1, 2, COLS.length);
+    const subtitleCell = ws.getCell(2, 1);
+    const itemCount = summaryByCategory.reduce((acc, g) => acc + g.items.length, 0);
+    subtitleCell.value = `Resumo Geral — Todos os Insumos Somados · ${itemCount} material(is) · Gerado em ${new Date().toLocaleDateString("pt-BR")}`;
+    subtitleCell.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
+
+    ws.getRow(3).height = 6; // linha em branco
+
+    // Cabeçalho da tabela
+    const headerRowNum = 4;
+    const headerRow = ws.getRow(headerRowNum);
+    COLS.forEach((c, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = c.header;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: EXCEL_HEADER_FILL } };
+      cell.alignment = { vertical: "middle", horizontal: i >= 3 ? "right" : i === 2 ? "center" : "left" };
+      cell.border = fullBorder;
+    });
+    headerRow.height = 20;
+
+    let rowNum = headerRowNum + 1;
+    let zebra = false;
+
+    for (const group of summaryByCategory) {
+      // Faixa da categoria
+      ws.mergeCells(rowNum, 1, rowNum, COLS.length);
+      const catCell = ws.getCell(rowNum, 1);
+      catCell.value = `${group.category}  (${group.items.length})`;
+      catCell.font = { bold: true, color: { argb: EXCEL_CATEGORY_TEXT }, size: 10.5 };
+      catCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: EXCEL_CATEGORY_FILL } };
+      catCell.alignment = { vertical: "middle" };
+      ws.getRow(rowNum).height = 18;
+      rowNum++;
+      zebra = false;
+
+      for (const item of group.items) {
+        const row = ws.getRow(rowNum);
+        row.getCell(1).value = item.sinapiCode || "—";
+        row.getCell(2).value = item.description;
+        row.getCell(3).value = item.unit;
+        row.getCell(4).value = item.quantity;
+        row.getCell(5).value = item.purchaseSuggestion || "—";
+        row.getCell(6).value = item.unitCost;
+        row.getCell(7).value = item.totalCost;
+
+        row.getCell(3).alignment = { horizontal: "center" };
+        row.getCell(4).alignment = { horizontal: "right" };
+        row.getCell(4).numFmt = "#,##0.0000";
+        row.getCell(6).alignment = { horizontal: "right" };
+        row.getCell(6).numFmt = '"R$" #,##0.00';
+        row.getCell(7).alignment = { horizontal: "right" };
+        row.getCell(7).numFmt = '"R$" #,##0.00';
+        row.getCell(7).font = { bold: true };
+
+        for (let c = 1; c <= COLS.length; c++) {
+          const cell = row.getCell(c);
+          cell.border = fullBorder;
+          if (zebra) {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: EXCEL_ZEBRA_FILL } };
+          }
+        }
+        zebra = !zebra;
+        rowNum++;
+      }
+
+      // Subtotal da categoria
+      ws.mergeCells(rowNum, 1, rowNum, COLS.length - 1);
+      const subLabelCell = ws.getCell(rowNum, 1);
+      subLabelCell.value = `Subtotal ${group.category}`;
+      subLabelCell.font = { bold: true, size: 10, color: { argb: "FF4B5563" } };
+      subLabelCell.alignment = { horizontal: "right" };
+      const subValueCell = ws.getCell(rowNum, COLS.length);
+      subValueCell.value = group.subtotal;
+      subValueCell.numFmt = '"R$" #,##0.00';
+      subValueCell.font = { bold: true, size: 10, color: { argb: "FF374151" } };
+      subValueCell.alignment = { horizontal: "right" };
+      for (let c = 1; c <= COLS.length; c++) {
+        ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: EXCEL_SUBTOTAL_FILL } };
+        ws.getCell(rowNum, c).border = fullBorder;
+      }
+      rowNum++;
+    }
+
+    // Total geral
+    ws.mergeCells(rowNum, 1, rowNum, COLS.length - 1);
+    const totalLabelCell = ws.getCell(rowNum, 1);
+    totalLabelCell.value = "TOTAL GERAL";
+    totalLabelCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    totalLabelCell.alignment = { horizontal: "right", vertical: "middle" };
+    const totalValueCell = ws.getCell(rowNum, COLS.length);
+    totalValueCell.value = grandTotal;
+    totalValueCell.numFmt = '"R$" #,##0.00';
+    totalValueCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    totalValueCell.alignment = { horizontal: "right", vertical: "middle" };
+    for (let c = 1; c <= COLS.length; c++) {
+      ws.getCell(rowNum, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: EXCEL_TOTAL_FILL } };
+    }
+    ws.getRow(rowNum).height = 24;
+
+    ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: headerRowNum, column: COLS.length } };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${list.name} - Resumo Geral.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Excel gerado com sucesso!");
+  } catch (e) {
+    console.error(e);
+    toast.error("Erro ao gerar Excel.");
   }
 }
 
-// ─── Exportação PDF ───────────────────────────────────────────────────────────
-function exportToPdf(list: any, grouped: any[], summary: any[], grandTotal: number) {
+// ─── Exportação PDF — Resumo Geral (pronto pra cotação com fornecedores) ─────
+function exportToPdf(list: any, summaryByCategory: any[], grandTotal: number) {
   try {
     import("jspdf").then(({ default: jsPDF }) =>
       import("jspdf-autotable").then(({ default: autoTable }) => {
         const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-        const pageWidth = doc.internal.pageSize.getWidth();
 
         const fmt2 = (v: number) =>
           v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+        const fmtQty2 = (v: number) =>
+          v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
         let y = 15;
         doc.setFontSize(14);
         doc.setFont("helvetica", "bold");
-        doc.text(`Lista de Materiais: ${list.name}`, 14, y);
-        y += 8;
+        doc.setTextColor(17, 24, 39);
+        doc.text(`Lista de Materiais — ${list.name}`, 14, y);
+        y += 6;
         doc.setFontSize(9);
         doc.setFont("helvetica", "normal");
-        doc.text(`Gerado em: ${new Date().toLocaleDateString("pt-BR")}`, 14, y);
-        y += 8;
+        doc.setTextColor(107, 114, 128);
+        const itemCount = summaryByCategory.reduce((acc: number, g: any) => acc + g.items.length, 0);
+        doc.text(
+          `Resumo Geral — Todos os Insumos Somados · ${itemCount} material(is) · Gerado em ${new Date().toLocaleDateString("pt-BR")}`,
+          14, y
+        );
+        y += 6;
 
-        for (const budgetGroup of grouped) {
-          doc.setFontSize(11);
-          doc.setFont("helvetica", "bold");
-          doc.text(`Orçamento: ${budgetGroup.budgetTitle}`, 14, y);
-          y += 6;
-
-          for (const stage of budgetGroup.stages) {
-            doc.setFontSize(9);
-            doc.setFont("helvetica", "bold");
-            doc.setTextColor(60, 60, 60);
-            doc.text(`Etapa: ${stage.stageName}`, 14, y);
-            y += 4;
-
-            const stageTotal = stage.items.reduce(
-              (acc: number, i: any) => acc + parseFloat(i.totalCost || "0"), 0
-            );
-
-            autoTable(doc, {
-              startY: y,
-              head: [["Cód. SINAPI", "Descrição", "UN", "Quantidade", "Custo Unit.", "Custo Total"]],
-              body: [
-                ...stage.items.map((item: any) => [
-                  item.sinapiCode || "—",
-                  item.description,
-                  item.unit,
-                  Number(item.quantity).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
-                  fmt2(parseFloat(item.unitCost)),
-                  fmt2(parseFloat(item.totalCost)),
-                ]),
-                [{ content: `Subtotal: ${stage.stageName}`, colSpan: 5, styles: { fontStyle: "bold", halign: "right" } }, { content: fmt2(stageTotal), styles: { fontStyle: "bold" } }],
-              ],
-              styles: { fontSize: 7, cellPadding: 1.5 },
-              headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: "bold" },
-              columnStyles: {
-                0: { cellWidth: 22 },
-                2: { cellWidth: 12, halign: "center" },
-                3: { cellWidth: 22, halign: "right" },
-                4: { cellWidth: 28, halign: "right" },
-                5: { cellWidth: 28, halign: "right" },
-              },
-              margin: { left: 14, right: 14 },
-            });
-
-            y = (doc as any).lastAutoTable.finalY + 6;
-          }
-          y += 4;
-        }
-
-        // Resumo geral
-        doc.addPage();
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0, 0, 0);
-        doc.text("Resumo Geral — Todos os Insumos Somados", 14, 15);
-
-        autoTable(doc, {
-          startY: 22,
-          head: [["Cód. SINAPI", "Descrição", "UN", "Qtde Total", "Custo Unit.", "Custo Total"]],
-          body: [
-            ...summary.map((item) => [
+        // Monta o corpo já com as faixas de categoria e subtotais embutidos,
+        // marcando cada linha especial pra estilizar no didParseCell.
+        const body: any[] = [];
+        for (const group of summaryByCategory) {
+          body.push([
+            { content: `${group.category}  (${group.items.length})`, colSpan: 7, styles: { fontStyle: "bold", textColor: [29, 78, 216], fillColor: [220, 234, 251], fontSize: 8 } },
+          ]);
+          for (const item of group.items) {
+            body.push([
               item.sinapiCode || "—",
               item.description,
               item.unit,
-              item.quantity.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
+              fmtQty2(item.quantity),
+              item.purchaseSuggestion || "—",
               fmt2(item.unitCost),
               fmt2(item.totalCost),
-            ]),
-            [
-              { content: "TOTAL GERAL", colSpan: 5, styles: { fontStyle: "bold", halign: "right", fillColor: [37, 99, 235], textColor: 255 } },
-              { content: fmt2(grandTotal), styles: { fontStyle: "bold", fillColor: [37, 99, 235], textColor: 255 } },
-            ],
-          ],
-          styles: { fontSize: 7, cellPadding: 1.5 },
+            ]);
+          }
+          body.push([
+            { content: `Subtotal ${group.category}`, colSpan: 6, styles: { fontStyle: "bold", halign: "right", fillColor: [243, 244, 246], textColor: [75, 85, 99] } },
+            { content: fmt2(group.subtotal), styles: { fontStyle: "bold", fillColor: [243, 244, 246], textColor: [55, 65, 81] } },
+          ]);
+        }
+        body.push([
+          { content: "TOTAL GERAL", colSpan: 6, styles: { fontStyle: "bold", halign: "right", fillColor: [37, 99, 235], textColor: 255, fontSize: 10 } },
+          { content: fmt2(grandTotal), styles: { fontStyle: "bold", fillColor: [37, 99, 235], textColor: 255, fontSize: 10 } },
+        ]);
+
+        autoTable(doc, {
+          startY: y,
+          head: [["Cód. SINAPI", "Descrição", "UN", "Qtde Total", "Compra Sugerida", "Custo Unit.", "Custo Total"]],
+          body,
+          styles: { fontSize: 7.5, cellPadding: 1.8 },
           headStyles: { fillColor: [31, 41, 55], textColor: 255, fontStyle: "bold" },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
           columnStyles: {
             0: { cellWidth: 22 },
             2: { cellWidth: 12, halign: "center" },
-            3: { cellWidth: 28, halign: "right" },
-            4: { cellWidth: 28, halign: "right" },
-            5: { cellWidth: 28, halign: "right" },
+            3: { cellWidth: 22, halign: "right" },
+            4: { cellWidth: 28 },
+            5: { cellWidth: 26, halign: "right" },
+            6: { cellWidth: 28, halign: "right" },
           },
           margin: { left: 14, right: 14 },
         });
 
-        doc.save(`${list.name}.pdf`);
+        doc.save(`${list.name} - Resumo Geral.pdf`);
         toast.success("PDF gerado com sucesso!");
       })
     );
