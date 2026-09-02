@@ -152,6 +152,12 @@ export default function BudgetForm() {
   const [isInputDialogOpen, setIsInputDialogOpen] = useState(false);
   const [selectedStageForInput, setSelectedStageForInput] = useState<number | null>(null);
   const [includeMaterial, setIncludeMaterial] = useState(true);
+  // Rastreia pra qual budgetId o toggle "Incluir Material no Orçamento" já foi
+  // sincronizado a partir do banco — evita que um refetch de `budget` (disparado,
+  // por ex., ao salvar o override de material de uma composição) sobrescreva
+  // o valor do toggle ainda não salvo (usuário desligou mas não clicou em
+  // "Salvar Parâmetros de BDI"). Só volta a ligar quando o próprio usuário mexer.
+  const includeMaterialSyncedForBudgetId = useRef<number | null>(null);
   const [bdiParamsCollapsed, setBdiParamsCollapsed] = useState(true); // Recolhido por padrão
   const [bdiCardsCollapsed, setBdiCardsCollapsed] = useState(true); // Recolhido por padrão
   const [presentationMode, setPresentationMode] = useState(false); // Modo Apresentação
@@ -802,9 +808,18 @@ export default function BudgetForm() {
       if (budget.id) {
         setBudgetId(budget.id);
       }
-      // Carregar includeMaterial do banco (1 = true, 0 = false)
-      if ((budget as any).includeMaterial !== undefined && (budget as any).includeMaterial !== null) {
+      // Carregar includeMaterial do banco (1 = true, 0 = false) — só na primeira
+      // vez que este orçamento é carregado. Refetches subsequentes (disparados
+      // por salvar o override de material de uma composição, por ex.) não devem
+      // sobrescrever um toggle que o usuário mudou localmente e ainda não salvou.
+      if (
+        budget.id &&
+        includeMaterialSyncedForBudgetId.current !== budget.id &&
+        (budget as any).includeMaterial !== undefined &&
+        (budget as any).includeMaterial !== null
+      ) {
         setIncludeMaterial(Number((budget as any).includeMaterial) !== 0);
+        includeMaterialSyncedForBudgetId.current = budget.id;
       }
     }
   }, [budget, reset]);
