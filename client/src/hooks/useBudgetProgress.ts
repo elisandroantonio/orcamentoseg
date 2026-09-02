@@ -15,6 +15,7 @@ export interface BdiConfigEntry {
   additionalIncrement: number;
   discount?: number;
   aplicarEncargosSociais?: boolean;
+  includeMaterialOverride?: boolean;
 }
 
 export interface BudgetBdiParams {
@@ -58,12 +59,12 @@ export function useSaldoMedido(
     const calcItemTotalWithBdi = (item: any): number => {
       const qty = Number(item.quantity);
       const rawMaterial = Number(item.materialCost);
-      const material = includeMaterial ? rawMaterial : 0;
       const labor = Number(item.laborCost);
       const equipment = Number(item.equipmentCost);
       const service = Number(item.serviceCost);
       const other = Number(item.otherCost);
       const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0, aplicarEncargosSociais: true };
+      const material = (includeMaterial || config.includeMaterialOverride) ? rawMaterial : 0;
       const aplicarEncargos = config.aplicarEncargosSociais !== false;
       const bdiMult = calcBDIMultiplier(config.additionalIncrement, config.discount || 0);
       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);

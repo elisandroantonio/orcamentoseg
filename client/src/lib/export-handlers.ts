@@ -112,7 +112,12 @@ export async function handleExportPDF(
       totalOther += parseFloat(item.otherCost || "0") * qty;
     });
 
-    const effectiveMaterial = (withBDI && !includeMaterial) ? 0 : totalMaterial;
+    // O caller (BudgetForm.tsx) já monta `items` com o materialCost de cada
+    // composição zerado ou não conforme includeMaterial + includeMaterialOverride
+    // por item (buildItemsWithBDIForExport / itemsWithoutBDI) — não re-zerar
+    // aqui em cima do total já agregado, senão o override por composição
+    // (ex: escavação, tapume) seria anulado de novo neste passo.
+    const effectiveMaterial = totalMaterial;
     // Incorporar equipment, service e other em labor
     const totalLaborWithOthers = totalLabor + totalEquipment + totalService + totalOther;
     const totalWithoutBDI = effectiveMaterial + totalLaborWithOthers;
@@ -224,6 +229,7 @@ export async function handleExportPDF(
             itemNumber: itemNumber,
             isCompositeHeader: true,
             compositeTotal: compositeTotalMat + compositeTotalLab,
+            materialIncluded: true, // materialCost já vem zerado/não pela buildItemsWithBDIForExport
           });
           
           // Filhos do composto indentados
@@ -243,10 +249,16 @@ export async function handleExportPDF(
               isComposition: true,
               isCompositeChild: true,
               inputs: child.inputs || [],
+              materialIncluded: true, // materialCost já vem zerado/não pela buildItemsWithBDIForExport
             });
             
             // Se analítico, mostrar insumos dos filhos do composto
             if (exportType === 'analitico' && child.inputs && child.inputs.length > 0) {
+              // materialCost do filho já vem zerado ou não conforme includeMaterial +
+              // includeMaterialOverride desta composição (buildItemsWithBDIForExport) —
+              // usar o mesmo sinal aqui pros insumos de material não ficarem em
+              // R$ 0,00 quando o override ligou o material desta composição.
+              const childMaterialIncluded = parseFloat(child.materialCost || "0") > 0 || includeMaterial;
               child.inputs.forEach((input: any, inputIdx: number) => {
                 pdfItems.push({
                   description: input.input?.description || input.description || "",
@@ -263,6 +275,7 @@ export async function handleExportPDF(
                   coefficient: input.coefficient,
                   unitCost: parseFloat(input.input?.unitCost || input.unitCost || "0"),
                   inputType: (input.input?.type || input.type || "").toLowerCase(),
+                  materialIncluded: childMaterialIncluded,
                 });
               });
             }
@@ -281,10 +294,14 @@ export async function handleExportPDF(
             itemNumber: itemNumber,
             isComposition: true,
             inputs: item.inputs || [],
+            materialIncluded: true, // materialCost já vem zerado/não pela buildItemsWithBDIForExport
           });
           
           // Se for orçamento analítico, adicionar insumos
           if (exportType === 'analitico' && item.inputs && item.inputs.length > 0) {
+            // materialCost já vem zerado ou não conforme includeMaterial +
+            // includeMaterialOverride desta composição — mesmo sinal pros insumos.
+            const itemMaterialIncluded = parseFloat(item.materialCost || "0") > 0 || includeMaterial;
             item.inputs.forEach((input: any, inputIdx: number) => {
               pdfItems.push({
                 description: input.input?.description || input.description || "",
@@ -301,6 +318,7 @@ export async function handleExportPDF(
                 coefficient: input.coefficient,
                 unitCost: parseFloat(input.input?.unitCost || input.unitCost || "0"),
                 inputType: (input.input?.type || input.type || "").toLowerCase(),
+                materialIncluded: itemMaterialIncluded,
               });
             });
           }
@@ -425,7 +443,12 @@ export async function handleExportExcel(
       totalOther += parseFloat(item.otherCost || "0") * qty;
     });
 
-    const effectiveMaterial = (withBDI && !includeMaterial) ? 0 : totalMaterial;
+    // O caller (BudgetForm.tsx) já monta `items` com o materialCost de cada
+    // composição zerado ou não conforme includeMaterial + includeMaterialOverride
+    // por item (buildItemsWithBDIForExport / itemsWithoutBDI) — não re-zerar
+    // aqui em cima do total já agregado, senão o override por composição
+    // (ex: escavação, tapume) seria anulado de novo neste passo.
+    const effectiveMaterial = totalMaterial;
     // Incorporar equipment, service e other em labor
     const totalLaborWithOthers = totalLabor + totalEquipment + totalService + totalOther;
     const totalWithoutBDI = effectiveMaterial + totalLaborWithOthers;

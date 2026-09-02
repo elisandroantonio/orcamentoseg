@@ -256,6 +256,13 @@ export const budgetItems = mysqlTable("budget_items", {
   laborAdjustment: decimal("laborAdjustment", { precision: 10, scale: 2 }).notNull().default("0"), // % de ajuste sobre M.O. (ex: 55.4 = +55,4%)
   // Ajuste de Material - percentual de acréscimo (+) ou desconto (-) sobre Material
   materialAdjustment: decimal("materialAdjustment", { precision: 10, scale: 2 }).notNull().default("0"), // % de ajuste sobre Material (ex: 9 = +9%, -5 = -5%)
+  // Força a inclusão do material desta composição no orçamento mesmo quando
+  // o toggle geral "Incluir Material no Orçamento" (budgets.includeMaterial)
+  // está desligado — usado em composições como escavação, tapume,
+  // almoxarifado, container etc. onde o material precisa entrar mesmo em
+  // orçamentos de apenas mão de obra. Só tem efeito quando o toggle geral
+  // está OFF; quando ligado, o material já entra normalmente pra todos.
+  includeMaterialOverride: tinyint("includeMaterialOverride").notNull().default(0), // 1 = incluir material desta composição mesmo com o toggle geral desligado
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (table) => ({
   budgetIdIdx: index("budget_items_budgetId_idx").on(table.budgetId),

@@ -1286,6 +1286,7 @@ export const appRouter = router({
             aplicarEncargosSociais: budgetItems.aplicarEncargosSociais,
             laborAdjustment: budgetItems.laborAdjustment,
             materialAdjustment: budgetItems.materialAdjustment,
+            includeMaterialOverride: budgetItems.includeMaterialOverride,
             composition: {
               id: compositions.id,
               code: compositions.code,
@@ -1325,6 +1326,7 @@ export const appRouter = router({
                 aplicarEncargosSociais: budgetItems.aplicarEncargosSociais,
                 laborAdjustment: budgetItems.laborAdjustment,
                 materialAdjustment: budgetItems.materialAdjustment,
+                includeMaterialOverride: budgetItems.includeMaterialOverride,
                 composition: {
                   id: compositions.id,
                   code: compositions.code,
@@ -1422,6 +1424,7 @@ export const appRouter = router({
           aplicarEncargosSociais: number | null;
           laborAdjustment: string | null;
           materialAdjustment: string | null;
+          includeMaterialOverride: number | null;
         };
 
         // Valor de material/M.O. de UM item (composição simples ou filho de
@@ -1435,7 +1438,10 @@ export const appRouter = router({
           const service = parseFloat(item.serviceCost || "0");
           const other = parseFloat(item.otherCost || "0");
 
-          const effectiveMaterial = includeMaterial ? material : 0;
+          // includeMaterialOverride: força incluir o material desta composição
+          // mesmo com o toggle geral desligado (ex: escavação, tapume,
+          // almoxarifado, container) — mesma regra do client (Comp. BDI).
+          const effectiveMaterial = (includeMaterial || item.includeMaterialOverride === 1) ? material : 0;
           const config = bdiConfigByItem.get(item.id) || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
           const aplicarEncargos = item.aplicarEncargosSociais !== 0; // coluna já vem com default 1
           const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
@@ -1465,8 +1471,11 @@ export const appRouter = router({
             let lab = 0;
             for (const child of children) {
               const qty = parseFloat(child.quantity || "0");
+              // itemUnitWithBdi já aplica o gate de includeMaterial (incluindo
+              // o override por item) dentro de effectiveMaterial — não repetir
+              // aqui, senão o override do filho seria anulado de novo.
               const { materialWithBDI, totalLabor } = itemUnitWithBdi(child);
-              mat += (includeMaterial ? materialWithBDI : 0) * qty;
+              mat += materialWithBDI * qty;
               const childLaborAdj = parseFloat(child.laborAdjustment || "0");
               lab += (totalLabor * (1 + childLaborAdj / 100)) * qty;
             }
@@ -2926,6 +2935,7 @@ export const appRouter = router({
         aplicarEncargosSociais: z.boolean().optional(), // Melhoria 16
         laborAdjustment: z.number().optional(), // Melhoria 17: ajuste % sobre M.O.
         materialAdjustment: z.number().optional(), // Ajuste % sobre Material
+        includeMaterialOverride: z.boolean().optional(), // Força incluir material desta composição mesmo com includeMaterial geral desligado
       }))
       .mutation(async ({ ctx, input }) => {
         const database = await getDb();
@@ -2979,6 +2989,9 @@ export const appRouter = router({
         if (input.materialAdjustment !== undefined) {
           itemUpdates.materialAdjustment = input.materialAdjustment.toFixed(2);
         }
+        if (input.includeMaterialOverride !== undefined) {
+          itemUpdates.includeMaterialOverride = input.includeMaterialOverride ? 1 : 0;
+        }
         if (Object.keys(itemUpdates).length > 0) {
           await database
             .update(budgetItems)
@@ -3009,7 +3022,8 @@ export const appRouter = router({
         // Usando rawQueryParams para evitar cache de prepared statements do Drizzle
         const rawConfigs = await db.rawQueryParams(
           `SELECT bdi.id, bdi.budgetItemId, bdi.applyBdiToMaterial, bdi.applyBdiToLabor,
-           bdi.additionalIncrement, bi.materialAdjustment, bi.laborAdjustment, bi.aplicarEncargosSociais
+           bdi.additionalIncrement, bi.materialAdjustment, bi.laborAdjustment, bi.aplicarEncargosSociais,
+           bi.includeMaterialOverride
            FROM budget_item_bdi_config bdi
            INNER JOIN budget_items bi ON bdi.budgetItemId = bi.id
            WHERE bi.budgetId = ?`,
@@ -3025,6 +3039,7 @@ export const appRouter = router({
           materialAdjustment: r.materialAdjustment ?? '0',
           laborAdjustment: r.laborAdjustment ?? '0',
           aplicarEncargosSociais: r.aplicarEncargosSociais,
+          includeMaterialOverride: r.includeMaterialOverride,
         }));
         
         return configs;

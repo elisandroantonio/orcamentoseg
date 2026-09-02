@@ -33,6 +33,7 @@ interface BudgetItem {
   otherCost?: number;
   level: number; // 0 = etapa, 1 = composição
   stageId?: number;
+  materialIncluded?: boolean; // Se ausente, cai no includeMaterial geral
 }
 
 interface BudgetSummary {
@@ -302,7 +303,10 @@ export async function generateBudgetPDF(
       const unitCost = parseFloat(item.unitCost) || 0;
       const inputTotal = coeff * unitCost;
       const isLabor = item.inputType === 'labor' || item.inputType === 'service';
-      const matUnit = (!isLabor && includeMaterial) ? unitCost : 0;
+      // materialIncluded (calculado por composição em export-handlers.ts, considera
+      // includeMaterialOverride) tem prioridade sobre o includeMaterial geral quando presente.
+      const materialAllowed = item.materialIncluded !== undefined ? item.materialIncluded : includeMaterial;
+      const matUnit = (!isLabor && materialAllowed) ? unitCost : 0;
       const labUnit = isLabor ? unitCost : 0;
       const matTotal = matUnit * coeff;
       const labTotal = labUnit * coeff;
@@ -320,7 +324,10 @@ export async function generateBudgetPDF(
     } else {
       // Item (composição ou serviço)
       const qty = parseFloat(item.quantity);
-      const materialUnit = includeMaterial ? item.materialCost : 0;
+      // materialCost desta linha já vem final (zerado ou não conforme includeMaterial +
+      // includeMaterialOverride) do export-handlers.ts — materialIncluded=true nas linhas
+      // de composição/composto sinaliza isso; só recai no includeMaterial geral se ausente.
+      const materialUnit = (item.materialIncluded !== undefined ? item.materialIncluded : includeMaterial) ? item.materialCost : 0;
       const laborUnit = item.laborCost;
       const materialTotal = materialUnit * qty;
       const laborTotal = laborUnit * qty;

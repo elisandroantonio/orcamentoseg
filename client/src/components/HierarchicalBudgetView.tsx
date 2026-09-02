@@ -85,8 +85,8 @@ interface HierarchicalBudgetViewProps {
   onUpdateCompositionToBase?: (compositionId: number, budgetItemId: number | undefined, inputs: Array<{ inputId: number; coefficient: number; unitCost: number }>) => Promise<void>;
   onSaveCompositionForBudget?: (compositionId: number, budgetItemId: number, inputs: CompositionInput[]) => Promise<void>;
   showBdiConfig?: boolean;
-  bdiConfigs?: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number }>;
-  onUpdateBdiConfig?: (itemId: number, config: { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number }) => void;
+  bdiConfigs?: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }>;
+  onUpdateBdiConfig?: (itemId: number, config: { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }) => void;
   onMoveItemUp?: (itemId: number) => void; // Melhoria 17
   onMoveItemDown?: (itemId: number) => void; // Melhoria 17
   includeMaterial?: boolean; // Controle de exibição de material (desabilitar = apenas mão de obra)
@@ -487,7 +487,8 @@ export default function HierarchicalBudgetView({
       const mat = showBdiConfig
         ? Number(child.materialCost)
         : (customCosts[child.id]?.materialCost ?? Number(child.materialCost));
-      const effectiveMat = includeMaterial ? mat : 0; // Zerar material se desabilitado
+      const forceInclude = bdiConfigs[child.id]?.includeMaterialOverride === true;
+      const effectiveMat = (includeMaterial || forceInclude) ? mat : 0; // Zerar material se desabilitado (exceto override por composição)
       return sum + effectiveMat * Number(child.quantity);
     }, 0);
     const totalLab = children.reduce((sum, child) => {
@@ -632,7 +633,8 @@ export default function HierarchicalBudgetView({
           const childMatRaw = showBdiConfig
             ? Number(child.materialCost)
             : (customCosts[child.id]?.materialCost ?? Number(child.materialCost));
-          const childMat = includeMaterial ? childMatRaw : 0; // Zerar material se desabilitado
+          const childForceInclude = bdiConfigs[child.id]?.includeMaterialOverride === true;
+          const childMat = (includeMaterial || childForceInclude) ? childMatRaw : 0; // Zerar material se desabilitado (exceto override por composição)
           const childLabRaw = showBdiConfig
             ? Number(child.laborCost)
             : (customCosts[child.id]?.laborCost ?? Number(child.laborCost));
@@ -774,6 +776,20 @@ export default function HierarchicalBudgetView({
                                 />
                                 <span className="text-sm">Aplicar Encargos Sociais</span>
                               </label>
+                              {!includeMaterial && (
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={bdiConfigs[child.id]?.includeMaterialOverride ?? false}
+                                    onChange={(e) => {
+                                      const currentConfig = bdiConfigs[child.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+                                      onUpdateBdiConfig(child.id, { ...currentConfig, includeMaterialOverride: e.target.checked });
+                                    }}
+                                    className="h-4 w-4"
+                                  />
+                                  <span className="text-sm">Incluir Material na Composição</span>
+                                </label>
+                              )}
                               <div className="space-y-1">
                                 <label className="text-sm font-semibold text-blue-700">Ajuste Material (%)</label>
                                 <p className="text-xs text-slate-500">Acréscimo (+) ou desconto (-) sobre o Material desta composição</p>
@@ -1121,6 +1137,20 @@ export default function HierarchicalBudgetView({
                         />
                         <span className="text-sm">Aplicar Encargos Sociais</span>
                       </label>
+                      {!includeMaterial && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={bdiConfigs[item.id]?.includeMaterialOverride ?? false}
+                            onChange={(e) => {
+                              const currentConfig = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+                              onUpdateBdiConfig(item.id, { ...currentConfig, includeMaterialOverride: e.target.checked });
+                            }}
+                            className="h-4 w-4"
+                          />
+                          <span className="text-sm">Incluir Material na Composição</span>
+                        </label>
+                      )}
                       <div className="space-y-1">
                         <label className="text-sm font-semibold text-blue-700">Ajuste Material (%)</label>
                         <p className="text-xs text-slate-500">Acréscimo (+) ou desconto (-) sobre o Material desta composição</p>
@@ -1354,7 +1384,8 @@ export default function HierarchicalBudgetView({
       const children = getCompositeChildren(item.id);
       const mat = children.reduce((sum, child) => {
         const m = customCosts[child.id]?.materialCost ?? Number(child.materialCost);
-        const effectiveM = includeMaterial ? m : 0; // Zerar material se desabilitado
+        const forceInclude = bdiConfigs[child.id]?.includeMaterialOverride === true;
+        const effectiveM = (includeMaterial || forceInclude) ? m : 0; // Zerar material se desabilitado (exceto override por composição)
         return sum + effectiveM * Number(child.quantity);
       }, 0);
       const lab = children.reduce((sum, child) => {

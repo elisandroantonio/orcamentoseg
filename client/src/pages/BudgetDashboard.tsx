@@ -67,6 +67,7 @@ export default function BudgetDashboard() {
         additionalIncrement: Number(c.additionalIncrement || 0),
         discount: c.discount !== undefined ? Number(c.discount) : undefined,
         aplicarEncargosSociais: c.aplicarEncargosSociais,
+        includeMaterialOverride: Number(c.includeMaterialOverride) === 1,
       },
     ])
   );

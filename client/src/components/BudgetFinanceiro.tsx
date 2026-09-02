@@ -67,7 +67,7 @@ interface MeasurementItemData {
 interface BudgetFinanceiroProps {
   budgetId: number;
   stages: BudgetStage[];
-  bdiConfigs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean }>;
+  bdiConfigs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; includeMaterialOverride?: boolean }>;
   socialCharges: number;
   adminCentral: number;
   profit: number;
@@ -166,12 +166,12 @@ function OriginalBudgetTab({
   const calcItemTotalWithBdi = useCallback((item: BudgetItem): number => {
     const qty = Number(item.quantity);
     const rawMaterial = Number(item.materialCost);
-    const material = includeMaterial ? rawMaterial : 0;
     const labor = Number(item.laborCost);
     const equipment = Number(item.equipmentCost);
     const service = Number(item.serviceCost);
     const other = Number(item.otherCost);
     const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0, aplicarEncargosSociais: true };
+    const material = (includeMaterial || config.includeMaterialOverride) ? rawMaterial : 0;
     const aplicarEncargos = config.aplicarEncargosSociais !== false;
     const bdiMult = calcBDIMultiplier(config.additionalIncrement, config.discount || 0);
     const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
@@ -1035,9 +1035,9 @@ export function BudgetFinanceiro({
           if (item.type === 'composite') {
             (item.children || []).forEach(child => {
               const qty = Number(child.quantity);
-              const material = includeMaterial ? Number(child.materialCost) : 0;
               const labor = Number(child.laborCost);
               const config = bdiConfigs[child.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0, aplicarEncargosSociais: true };
+              const material = (includeMaterial || config.includeMaterialOverride) ? Number(child.materialCost) : 0;
               const bdiMult = calcBDI(config.additionalIncrement, config.discount || 0);
               const laborWithCharges = labor * (1 + (config.aplicarEncargosSociais !== false ? socialCharges : 0) / 100);
               total += (
@@ -1050,9 +1050,9 @@ export function BudgetFinanceiro({
             });
           } else {
             const qty = Number(item.quantity);
-            const material = includeMaterial ? Number(item.materialCost) : 0;
             const labor = Number(item.laborCost);
             const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0, aplicarEncargosSociais: true };
+            const material = (includeMaterial || config.includeMaterialOverride) ? Number(item.materialCost) : 0;
             const bdiMult = calcBDI(config.additionalIncrement, config.discount || 0);
             const laborWithCharges = labor * (1 + (config.aplicarEncargosSociais !== false ? socialCharges : 0) / 100);
             total += (
@@ -1100,12 +1100,12 @@ export function BudgetFinanceiro({
       const includeMat = serverData.budget.includeMaterial;
       const calcItemTotal = (item: any): number => {
         const qty = Number(item.quantity);
-        const mat = includeMat ? Number(item.materialCost) : 0;
         const lab = Number(item.laborCost);
         const eq = Number(item.equipmentCost);
         const svc = Number(item.serviceCost);
         const oth = Number(item.otherCost);
         const cfg = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0, aplicarEncargosSociais: true };
+        const mat = (includeMat || cfg.includeMaterialOverride) ? Number(item.materialCost) : 0;
         const bdiMult = calcBDIMult(cfg.additionalIncrement, cfg.discount || 0);
         const laborWithCharges = lab * (1 + (cfg.aplicarEncargosSociais !== false ? sc : 0) / 100);
         const matB = cfg.applyBdiToMaterial ? mat * bdiMult : mat;

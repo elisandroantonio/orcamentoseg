@@ -155,7 +155,7 @@ export default function BudgetForm() {
   const [bdiParamsCollapsed, setBdiParamsCollapsed] = useState(true); // Recolhido por padrão
   const [bdiCardsCollapsed, setBdiCardsCollapsed] = useState(true); // Recolhido por padrão
   const [presentationMode, setPresentationMode] = useState(false); // Modo Apresentação
-  const [bdiConfigs, setBdiConfigs] = useState<Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number }>>({});
+  const [bdiConfigs, setBdiConfigs] = useState<Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }>>({});
   // Total COM BDI de cada etapa, calculado pela própria aba "Comp. BDI"
   // (HierarchicalBudgetView) — repassado pro Gantt/Cronograma de Desembolso
   // pra garantir que os dois lugares sempre mostrem o mesmo valor.
@@ -223,7 +223,7 @@ export default function BudgetForm() {
   const bdiSaveTimerRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   
   // Handler centralizado para atualizar bdiConfigs: atualiza estado imediatamente + salva backend com debounce
-  const handleUpdateBdiConfig = useCallback((itemId: number, config: { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number }) => {
+  const handleUpdateBdiConfig = useCallback((itemId: number, config: { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }) => {
     // 1. Atualizar estado local imediatamente (re-renderiza tabela com novo preço)
     setBdiConfigs(prev => ({ ...prev, [itemId]: config }));
     // 2. Cancelar timer anterior para este item
@@ -241,6 +241,7 @@ export default function BudgetForm() {
         aplicarEncargosSociais: config.aplicarEncargosSociais,
         laborAdjustment: config.laborAdjustment || 0,
         materialAdjustment: config.materialAdjustment || 0,
+        includeMaterialOverride: config.includeMaterialOverride ?? false,
       });
     }, 600);
   }, [upsertBdiConfigMutation]);
@@ -276,7 +277,7 @@ export default function BudgetForm() {
   // Usa merge (não sobrescreve) para preservar valores editados localmente que ainda não foram persistidos
   useEffect(() => {
     if (bdiConfigsData && bdiConfigsData.length > 0) {
-      const configs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number }> = {};
+      const configs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }> = {};
       bdiConfigsData.forEach((config: any) => {
         configs[config.budgetItemId] = {
           applyBdiToMaterial: config.applyBdiToMaterial === 1,
@@ -286,6 +287,7 @@ export default function BudgetForm() {
           aplicarEncargosSociais: config.aplicarEncargosSociais === 1,
           laborAdjustment: parseFloat(config.laborAdjustment || "0"),
           materialAdjustment: parseFloat(config.materialAdjustment || "0"),
+          includeMaterialOverride: Number(config.includeMaterialOverride) === 1,
         };
       });
       // Merge: preservar valores já editados localmente (que podem estar à frente do backend)
@@ -539,7 +541,7 @@ export default function BudgetForm() {
       const other = parseFloat(item.otherCost || "0");
       
       // Aplicar filtro de material (quando desabilitado, material = 0; equipamentos NÃO são afetados)
-      const effectiveMaterial = includeMaterial ? material : 0;
+      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
       
       // Buscar configuração de BDI para este item
       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, aplicarEncargosSociais: true };
@@ -594,7 +596,7 @@ export default function BudgetForm() {
           const childEquipment = Number(child.equipmentCost) || 0;
           const childService = Number(child.serviceCost) || 0;
           const childOther = Number(child.otherCost) || 0;
-          const childEffectiveMaterial = includeMaterial ? childMaterial : 0;
+          const childEffectiveMaterial = (includeMaterial || bdiConfigs[child.id!]?.includeMaterialOverride) ? childMaterial : 0;
 
           const childConfig = bdiConfigs[child.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true, additionalIncrement: 0, discount: 0, laborAdjustment: 0 };
           const childAplicarEncargos = childConfig.aplicarEncargosSociais !== false;
@@ -648,7 +650,7 @@ export default function BudgetForm() {
       const equipment = Number(item.equipmentCost) || 0;
       const service = Number(item.serviceCost) || 0;
       const other = Number(item.otherCost) || 0;
-      const effectiveMaterial = includeMaterial ? material : 0;
+      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
 
       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true, additionalIncrement: 0, discount: 0, laborAdjustment: 0 };
       const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
@@ -1371,7 +1373,7 @@ export default function BudgetForm() {
     const other = Number(item.otherCost) || 0;
     
     // Aplicar filtro de material (equipamentos NÃO são afetados pelo includeMaterial)
-    const effectiveMaterial = includeMaterial ? material : 0;
+    const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
     
     // Equipment, service e other vão para M.O. (SEM encargos, SEM BDI nesta aba)
     const totalLabor = labor + equipment + service + other;
@@ -1395,7 +1397,7 @@ export default function BudgetForm() {
     const other = Number(item.otherCost) || 0;
     
     // Aplicar filtro de material (equipamentos NÃO são afetados pelo includeMaterial)
-    const effectiveMaterial = includeMaterial ? material : 0;
+    const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
     
     // Encargos sociais APENAS em labor, NÃO em equipment/service/other (Melhoria 16: considerar flag)
     const aplicarEncargos = true; // TODO: buscar do bdiConfigs se necessário
@@ -2635,7 +2637,7 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = includeMaterial ? material : 0;
+                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -2668,7 +2670,7 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = includeMaterial ? material : 0;
+                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -2715,7 +2717,7 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = includeMaterial ? material : 0;
+                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -2748,7 +2750,7 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = includeMaterial ? material : 0;
+                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -3065,7 +3067,7 @@ export default function BudgetForm() {
                       const other = parseFloat(item.otherCost || "0");
                       
                       // Aplicar filtro de material
-                      const effectiveMaterial = includeMaterial ? material : 0;
+                      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                       
                       // Buscar configuração de BDI para este item
                       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
@@ -3190,7 +3192,7 @@ export default function BudgetForm() {
                         const other = Number(item.otherCost) || 0;
                         
                         // Aplicar filtro de material
-                        const effectiveMaterial = includeMaterial ? material : 0;
+                        const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                         
                         // Buscar configuração de BDI para este item
                         const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
@@ -3333,7 +3335,7 @@ export default function BudgetForm() {
                       const equipment = parseFloat(item.equipmentCost || '0');
                       const service = parseFloat(item.serviceCost || '0');
                       const other = parseFloat(item.otherCost || '0');
-                      const effectiveMaterial = includeMaterial ? material : 0;
+                      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
                       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, aplicarEncargosSociais: true, laborAdjustment: 0 };
                       const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
                       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);

@@ -30,6 +30,7 @@ interface BudgetItem {
   serviceCost?: number;
   otherCost?: number;
   level: number;
+  materialIncluded?: boolean; // Se ausente, cai no includeMaterial geral
 }
 
 interface BudgetSummary {
@@ -159,7 +160,9 @@ export function generateBudgetExcel(
       ];
     } else {
       const qty = parseFloat(item.quantity);
-      const materialUnit = includeMaterial ? item.materialCost : 0;
+      // materialCost desta linha já vem final (zerado ou não conforme includeMaterial +
+      // includeMaterialOverride) do export-handlers.ts — só recai no includeMaterial geral se ausente.
+      const materialUnit = (item.materialIncluded !== undefined ? item.materialIncluded : includeMaterial) ? item.materialCost : 0;
       const laborUnit = item.laborCost;
       const materialTotal = materialUnit * qty;
       const laborTotal = laborUnit * qty;
