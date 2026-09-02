@@ -111,6 +111,7 @@ function OriginalBudgetTab({
   includeMaterial,
   selectedPeriodId,
   periods,
+  onDirtyChange,
 }: {
   budgetId: number;
   stages: BudgetStage[];
@@ -124,11 +125,27 @@ function OriginalBudgetTab({
   includeMaterial: boolean;
   selectedPeriodId: number | null;
   periods: MeasurementPeriod[];
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
   const [editingValues, setEditingValues] = useState<Record<number, string>>({});
   const [pendingChanges, setPendingChanges] = useState<Set<number>>(new Set());
   const [isSaving, setIsSaving] = useState(false);
+
+  // Avisa o componente pai (que controla o seletor de período) sempre que
+  // houver edições digitadas mas ainda não salvas — usado pra bloquear troca
+  // de período sem querer e perder o que foi digitado (% Medido some,
+  // parecendo que "zerou" quando na verdade nunca chegou a ser salvo).
+  useEffect(() => {
+    onDirtyChange?.(pendingChanges.size > 0);
+  }, [pendingChanges, onDirtyChange]);
+
+  // Ao desmontar (ex.: trocar de aba pra Aditivos), garante que o aviso de
+  // "não salvo" não fique preso ligado.
+  useEffect(() => {
+    return () => { onDirtyChange?.(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reset edits when period changes
   useEffect(() => {
@@ -565,12 +582,14 @@ function AdditiveMeasurementTab({
   budgetParams,
   selectedPeriodId,
   periods,
+  onDirtyChange,
 }: {
   additiveId: number;
   additiveName: string;
   budgetParams: { socialCharges: number; adminCentral: number; profit: number; taxes: number; risk: number; warranty: number };
   selectedPeriodId: number | null;
   periods: MeasurementPeriod[];
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [expandedStages, setExpandedStages] = useState<Set<number>>(new Set());
   const [editingValues, setEditingValues] = useState<Record<number, string>>({});
@@ -581,6 +600,16 @@ function AdditiveMeasurementTab({
     setEditingValues({});
     setPendingChanges(new Set());
   }, [selectedPeriodId]);
+
+  // Mesmo aviso de edições não salvas do OriginalBudgetTab, aqui pro
+  // painel de medição de aditivos.
+  useEffect(() => {
+    onDirtyChange?.(pendingChanges.size > 0);
+  }, [pendingChanges, onDirtyChange]);
+  useEffect(() => {
+    return () => { onDirtyChange?.(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Buscar etapas e itens do aditivo
   const { data: additiveStages = [] } = trpc.additives.getStages.useQuery(
@@ -961,7 +990,21 @@ export function BudgetFinanceiro({
   const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
   const [newPeriodForm, setNewPeriodForm] = useState({ name: "", startDate: "", endDate: "" });
   const [isExportingPDF, setIsExportingPDF] = useState(false);
+  // true quando a aba de medição atual (orçamento original ou aditivo) tem
+  // % digitados que ainda não foram salvos com "Salvar Medições" — usado pra
+  // avisar antes de trocar de período e evitar perder o que foi digitado
+  // (o que parecia a 1ª medição "zerando" ao criar a 2ª).
+  const [hasUnsavedMeasurements, setHasUnsavedMeasurements] = useState(false);
   const utils = trpc.useUtils();
+
+  const confirmDiscardUnsavedMeasurements = () => {
+    if (!hasUnsavedMeasurements) return true;
+    return confirm(
+      "Você tem % de medição digitados neste período que ainda não foram salvos.\n\n" +
+      "Se continuar, esses valores digitados serão perdidos (o que já estava salvo antes continua intacto).\n\n" +
+      "Clique em Cancelar e depois em \"Salvar Medições\" antes de trocar de período."
+    );
+  };
 
   // Queries
   const { data: periods = [], refetch: refetchPeriods } = trpc.measurements.listPeriods.useQuery(
@@ -1519,7 +1562,11 @@ export function BudgetFinanceiro({
           <Select
             value={selectedPeriodId?.toString() ?? ""}
             onValueChange={v => {
-              setSelectedPeriodId(v ? Number(v) : null);
+              const newId = v ? Number(v) : null;
+              if (newId === selectedPeriodId) return;
+              if (!confirmDiscardUnsavedMeasurements()) return;
+              setHasUnsavedMeasurements(false);
+              setSelectedPeriodId(newId);
             }}
           >
             <SelectTrigger className="h-8 text-xs flex-1">
@@ -1595,7 +1642,12 @@ export function BudgetFinanceiro({
         <div className="flex overflow-x-auto bg-slate-100 border-b">
           <button
             type="button"
-            onClick={() => setActiveTab("original")}
+            onClick={() => {
+              if (activeTab === "original") return;
+              if (!confirmDiscardUnsavedMeasurements()) return;
+              setHasUnsavedMeasurements(false);
+              setActiveTab("original");
+            }}
             className={cn(
               "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium whitespace-nowrap border-r transition-colors",
               activeTab === "original"
@@ -1610,7 +1662,12 @@ export function BudgetFinanceiro({
             <button
               key={additive.id}
               type="button"
-              onClick={() => setActiveTab(additive.id)}
+              onClick={() => {
+                if (activeTab === additive.id) return;
+                if (!confirmDiscardUnsavedMeasurements()) return;
+                setHasUnsavedMeasurements(false);
+                setActiveTab(additive.id);
+              }}
               className={cn(
                 "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium whitespace-nowrap border-r transition-colors",
                 activeTab === additive.id
@@ -1648,6 +1705,7 @@ export function BudgetFinanceiro({
               includeMaterial={includeMaterial}
               selectedPeriodId={selectedPeriodId}
               periods={periods as MeasurementPeriod[]}
+              onDirtyChange={setHasUnsavedMeasurements}
             />
           ) : (
             (() => {
@@ -1661,6 +1719,7 @@ export function BudgetFinanceiro({
                   budgetParams={{ socialCharges, adminCentral, profit, taxes, risk, warranty }}
                   selectedPeriodId={selectedPeriodId}
                   periods={periods as MeasurementPeriod[]}
+                  onDirtyChange={setHasUnsavedMeasurements}
                 />
               );
             })()
