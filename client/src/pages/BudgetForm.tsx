@@ -263,15 +263,19 @@ export default function BudgetForm() {
       refetchStages();
     },
   });
-  // Mutations de reordenação de etapas
-  const moveStageUpMutation = trpc.budgets.reorderStage.useMutation({
+  // Mutations de reordenação de etapas — ordem da PLANILHA (campo `order`,
+  // o "3 - BARRILHETE" da Estrutura do Orçamento), usadas pelas setas de
+  // mover em Comp. BDI e Comp. Real. Não confundir com `reorderStage`, que
+  // mexe em `scheduleOrder` (ordem só do Gantt) e é usada separadamente em
+  // BudgetGantt.tsx.
+  const moveStageUpMutation = trpc.budgets.reorderStageInSheet.useMutation({
     onSuccess: async () => {
       await utils.budgets.getStages.invalidate({ budgetId: budgetId || 0 });
       await refetchStages();
     },
     onError: (e) => { if (!e.message.includes('boundary')) toast.error('Erro ao mover etapa'); },
   });
-  const moveStageDownMutation = trpc.budgets.reorderStage.useMutation({
+  const moveStageDownMutation = trpc.budgets.reorderStageInSheet.useMutation({
     onSuccess: async () => {
       await utils.budgets.getStages.invalidate({ budgetId: budgetId || 0 });
       await refetchStages();

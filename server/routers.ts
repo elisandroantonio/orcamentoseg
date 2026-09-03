@@ -1660,7 +1660,78 @@ export const appRouter = router({
 
         return { success: true };
       }),
-    
+
+    // Move uma etapa/sub-etapa pra cima ou pra baixo na ORDEM DA PLANILHA
+    // (campo `order` — o número que aparece em "3 - BARRILHETE" na Estrutura
+    // do Orçamento, usado nas abas Comp. BDI e Comp. Real). Irmã da
+    // `reorderStage` acima, mas nunca toca em `scheduleOrder` (ordem do
+    // Gantt) e considera TODAS as etapas irmãs, tenham data configurada ou
+    // não — reorderStage só olha etapas com data (é o filtro certo pro
+    // Gantt, mas fazia essa ação "não funcionar" quando usada aqui, porque
+    // várias etapas do orçamento ainda não têm data marcada no cronograma).
+    reorderStageInSheet: protectedProcedure
+      .input(z.object({
+        budgetId: z.number(),
+        stageId: z.number(),
+        direction: z.enum(["up", "down"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await getDb();
+        if (!database) throw new Error("Database not available");
+
+        const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
+        if (!budget) throw new Error("Budget not found");
+
+        const [currentStageRow] = await database
+          .select()
+          .from(budgetStages)
+          .where(eq(budgetStages.id, input.stageId));
+        if (!currentStageRow) throw new Error("Stage not found");
+
+        const siblingsFilter = currentStageRow.parentStageId
+          ? and(eq(budgetStages.budgetId, input.budgetId), eq(budgetStages.parentStageId, currentStageRow.parentStageId))
+          : and(eq(budgetStages.budgetId, input.budgetId), isNull(budgetStages.parentStageId));
+
+        const siblings = await database
+          .select()
+          .from(budgetStages)
+          .where(siblingsFilter)
+          .orderBy(budgetStages.order, budgetStages.id);
+
+        const currentIndex = siblings.findIndex(s => s.id === input.stageId);
+        if (currentIndex === -1) throw new Error("Stage not found among siblings");
+
+        const swapIndex = input.direction === "up" ? currentIndex - 1 : currentIndex + 1;
+        if (swapIndex < 0 || swapIndex >= siblings.length) {
+          return { success: true, message: "Already at boundary" };
+        }
+
+        // Renumerar `order` de todos os irmãos sequencialmente (0..N-1) antes
+        // de trocar — garante valores únicos mesmo que `order` tenha ficado
+        // com empates/lacunas.
+        for (let i = 0; i < siblings.length; i++) {
+          if (siblings[i].order !== i) {
+            await database.update(budgetStages).set({ order: i }).where(eq(budgetStages.id, siblings[i].id));
+            siblings[i] = { ...siblings[i], order: i };
+          }
+        }
+
+        const normalizedCurrent = siblings[currentIndex];
+        const normalizedSwap = siblings[swapIndex];
+
+        await database
+          .update(budgetStages)
+          .set({ order: normalizedSwap.order })
+          .where(eq(budgetStages.id, normalizedCurrent.id));
+
+        await database
+          .update(budgetStages)
+          .set({ order: normalizedCurrent.order })
+          .where(eq(budgetStages.id, normalizedSwap.id));
+
+        return { success: true };
+      }),
+
     moveStageToPosition: protectedProcedure
       .input(z.object({
         budgetId: z.number(),
