@@ -863,7 +863,10 @@ export const appRouter = router({
         
         const code = `ORC-${currentYear}-${String(nextNumber).padStart(3, '0')}`;
         
-        // Criar novo orçamento
+        // Criar novo orçamento — inclui TODOS os parâmetros de BDI do
+        // original (adminCentral e includeMaterial estavam faltando aqui,
+        // então a cópia sempre nascia com AC=0% e "Incluir Material" ligado,
+        // divergindo do original mesmo sem o usuário mexer em nada).
         const [result] = await database.insert(budgets).values({
           userId: ctx.user.id,
           code,
@@ -874,10 +877,14 @@ export const appRouter = router({
           description: budget.description,
           observations: budget.observations,
           socialCharges: budget.socialCharges,
+          adminCentral: budget.adminCentral,
           profit: budget.profit,
           taxes: budget.taxes,
           risk: budget.risk,
           warranty: budget.warranty,
+          includeMaterial: budget.includeMaterial,
+          initialPaymentPercent: budget.initialPaymentPercent,
+          workStatus: budget.workStatus,
           totalCost: "0",
           totalLaborHours: "0",
           status: "draft",
@@ -924,10 +931,19 @@ export const appRouter = router({
           .from(budgetItems)
           .where(eq(budgetItems.budgetId, input.id))
           .orderBy(budgetItems.order);
-        
+
+        // oldItemId -> newItemId — precisa pra remapear parentItemId (itens
+        // filhos de um serviço composto) numa 2ª passada, depois que todos
+        // os itens novos já existirem. Antes esse remapeamento não existia
+        // e parentItemId nunca era copiado: todo item nascia "solto" (sem
+        // pai), fazendo os serviços compostos da cópia "explodirem" —
+        // aparecerem como itens soltos em vez de filhos agrupados.
+        const itemIdMap = new Map<number, number>();
+        const pendingParentUpdates: { newItemId: number; oldParentItemId: number }[] = [];
+
         for (const item of originalItems) {
           const newStageId = item.stageId ? stageIdMap.get(item.stageId) : null;
-          
+
           const [itemResult] = await database.insert(budgetItems).values({
             budgetId: newBudgetId,
             stageId: newStageId || null,
@@ -946,24 +962,71 @@ export const appRouter = router({
             laborHours: item.laborHours,
             totalLaborHours: item.totalLaborHours,
             order: item.order,
+            // Ajustes por composição (Comp. BDI) que também estavam faltando
+            // na cópia — a cópia sempre voltava com Encargos Sociais ligado
+            // e Ajuste Material/M.O. zerados, mesmo quando o original tinha
+            // ajustes configurados.
+            aplicarEncargosSociais: item.aplicarEncargosSociais,
+            laborAdjustment: item.laborAdjustment,
+            materialAdjustment: item.materialAdjustment,
+            includeMaterialOverride: item.includeMaterialOverride,
           });
-          
+
+          const newItemId = Number(itemResult.insertId);
+          itemIdMap.set(item.id, newItemId);
+          if (item.parentItemId) {
+            pendingParentUpdates.push({ newItemId, oldParentItemId: item.parentItemId });
+          }
+
           // Copiar insumos customizados (budget_item_inputs)
           const customInputs = await database
             .select()
             .from(budgetItemInputs)
             .where(eq(budgetItemInputs.budgetItemId, item.id));
-          
+
           for (const customInput of customInputs) {
             await database.insert(budgetItemInputs).values({
-              budgetItemId: Number(itemResult.insertId),
+              budgetItemId: newItemId,
               inputId: customInput.inputId,
               coefficient: customInput.coefficient,
               unitCost: customInput.unitCost,
             });
           }
+
+          // Copiar configuração de BDI do item (budget_item_bdi_config) —
+          // tabela separada de budgetItems, também não era copiada antes.
+          // É de onde vêm os checkboxes "Aplicar BDI ao Material/M.O." e os
+          // campos "Ajuste Material (%)"/"Ajuste M.O. (%)" do popover de
+          // Configuração de BDI em Comp. BDI.
+          const [bdiConfig] = await database
+            .select()
+            .from(budgetItemBdiConfig)
+            .where(eq(budgetItemBdiConfig.budgetItemId, item.id))
+            .limit(1);
+          if (bdiConfig) {
+            await database.insert(budgetItemBdiConfig).values({
+              budgetItemId: newItemId,
+              applyBdiToMaterial: bdiConfig.applyBdiToMaterial,
+              applyBdiToLabor: bdiConfig.applyBdiToLabor,
+              additionalIncrement: bdiConfig.additionalIncrement,
+              discount: bdiConfig.discount,
+              materialAdjustment: bdiConfig.materialAdjustment,
+            });
+          }
         }
-        
+
+        // 2ª passada: agora que todos os itens novos existem, remapear
+        // parentItemId dos filhos de serviço composto pro id novo do pai.
+        for (const { newItemId, oldParentItemId } of pendingParentUpdates) {
+          const newParentItemId = itemIdMap.get(oldParentItemId);
+          if (newParentItemId) {
+            await database
+              .update(budgetItems)
+              .set({ parentItemId: newParentItemId })
+              .where(eq(budgetItems.id, newItemId));
+          }
+        }
+
         // Recalcular totais do novo orçamento (os custos unitários já foram
         // copiados 1:1 dos itens originais, não precisa recalcular de novo)
         await db.recalculateBudgetTotals(newBudgetId, { skipItemCostRecalc: true });
