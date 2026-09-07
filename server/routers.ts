@@ -1033,7 +1033,126 @@ export const appRouter = router({
         
         return { id: newBudgetId, code };
       }),
-    
+
+    // Importa o cronograma (Gantt) de um outro orçamento já existente pro
+    // orçamento atual. Feito pra o caso de duplicar um orçamento (ex: pra
+    // faturamento direto) e não precisar remontar o cronograma do zero —
+    // as etapas já são as mesmas (mesmo nome/hierarquia), só falta copiar
+    // scheduleOrder/startDate/endDate/duration/predecessors do orçamento
+    // original pras etapas equivalentes do novo.
+    importScheduleFromBudget: protectedProcedure
+      .input(z.object({
+        targetBudgetId: z.number(),
+        sourceBudgetId: z.number(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await getDb();
+        if (!database) throw new Error("Database not available");
+
+        // Confirma que os dois orçamentos existem e são do usuário logado
+        const targetBudget = await db.getBudgetById(input.targetBudgetId, ctx.user.id);
+        if (!targetBudget) throw new Error("Orçamento de destino não encontrado");
+        const sourceBudget = await db.getBudgetById(input.sourceBudgetId, ctx.user.id);
+        if (!sourceBudget) throw new Error("Orçamento de origem não encontrado");
+        if (input.targetBudgetId === input.sourceBudgetId) {
+          throw new Error("Escolha um orçamento de origem diferente do atual");
+        }
+
+        const [targetStages, sourceStages] = await Promise.all([
+          database.select().from(budgetStages).where(eq(budgetStages.budgetId, input.targetBudgetId)),
+          database.select().from(budgetStages).where(eq(budgetStages.budgetId, input.sourceBudgetId)),
+        ]);
+
+        // Casa etapas dos dois orçamentos pelo nome (normalizado), navegando
+        // a hierarquia em paralelo (raiz com raiz, filhas de uma etapa casada
+        // com filhas da etapa equivalente). Se houver mais de uma etapa com
+        // o mesmo nome no mesmo nível, casa pela ordem entre as repetidas —
+        // não dá pra usar `order`/`scheduleOrder` direto porque no destino
+        // esses campos podem já ter sido alterados manualmente.
+        const normalize = (s: string) => s.trim().toLowerCase();
+        const sourceToTargetId = new Map<number, number>();
+        let matchedCount = 0;
+        let unmatchedNames: string[] = [];
+
+        const matchLevel = (sourceParentId: number | null, targetParentId: number | null) => {
+          const sourceChildren = sourceStages
+            .filter(s => s.parentStageId === sourceParentId)
+            .sort((a, b) => a.order - b.order);
+          const targetChildren = targetStages
+            .filter(s => s.parentStageId === targetParentId)
+            .sort((a, b) => a.order - b.order);
+
+          // Agrupa os alvos disponíveis por nome normalizado, na ordem em
+          // que aparecem, pra consumir 1 a 1 conforme acha correspondência
+          // repetida no mesmo nível.
+          const targetByName = new Map<string, typeof targetChildren>();
+          for (const t of targetChildren) {
+            const key = normalize(t.name);
+            if (!targetByName.has(key)) targetByName.set(key, []);
+            targetByName.get(key)!.push(t);
+          }
+
+          for (const s of sourceChildren) {
+            const key = normalize(s.name);
+            const candidates = targetByName.get(key);
+            const match = candidates?.shift();
+            if (match) {
+              sourceToTargetId.set(s.id, match.id);
+              matchedCount++;
+              matchLevel(s.id, match.id);
+            } else {
+              unmatchedNames.push(s.name);
+            }
+          }
+        };
+
+        matchLevel(null, null);
+
+        // Copia os campos de cronograma pras etapas casadas
+        for (const sourceStage of sourceStages) {
+          const newTargetId = sourceToTargetId.get(sourceStage.id);
+          if (!newTargetId) continue;
+
+          // Remapeia os IDs de predecessoras (referem-se a IDs de etapas do
+          // orçamento ORIGEM) pros IDs equivalentes no orçamento destino.
+          // Predecessoras que não têm etapa casada são descartadas (senão
+          // ficaria uma referência quebrada, apontando pra um ID que nem
+          // existe no orçamento destino).
+          let remappedPredecessors: string | null = null;
+          if (sourceStage.predecessors) {
+            try {
+              const preds = JSON.parse(sourceStage.predecessors) as { id: number; type?: string; lag?: number }[];
+              const remapped = preds
+                .map(p => {
+                  const newPredId = sourceToTargetId.get(p.id);
+                  return newPredId ? { ...p, id: newPredId } : null;
+                })
+                .filter((p): p is { id: number; type?: string; lag?: number } => p !== null);
+              remappedPredecessors = remapped.length > 0 ? JSON.stringify(remapped) : null;
+            } catch {
+              remappedPredecessors = null;
+            }
+          }
+
+          await database
+            .update(budgetStages)
+            .set({
+              scheduleOrder: sourceStage.scheduleOrder,
+              startDate: sourceStage.startDate,
+              endDate: sourceStage.endDate,
+              duration: sourceStage.duration,
+              predecessors: remappedPredecessors,
+            })
+            .where(eq(budgetStages.id, newTargetId));
+        }
+
+        return {
+          matchedCount,
+          unmatchedCount: unmatchedNames.length,
+          unmatchedNames,
+        };
+      }),
+
     moveToClient: protectedProcedure
       .input(z.object({
         budgetId: z.number(),

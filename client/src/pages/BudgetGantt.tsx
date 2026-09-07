@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { GanttChart, GanttTask } from "@/components/GanttChart";
 import { BudgetCurveS } from "@/components/budget/BudgetCurveS";
 import { PlanejadoRealizadoChart } from "@/components/budget/PlanejadoRealizadoChart";
@@ -164,6 +165,8 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const [expandedStageId, setExpandedStageId] = useState<number | null>(null);
   const [monthlyDistribution, setMonthlyDistribution] = useState<Record<string, number>>({});
   const [loadedDistributions, setLoadedDistributions] = useState<Set<number>>(new Set());
+  const [isImportScheduleDialogOpen, setIsImportScheduleDialogOpen] = useState(false);
+  const [importSourceBudgetId, setImportSourceBudgetId] = useState<string>("");
 
   // Curva S — ref pra "fotografar" o gráfico (recharts/SVG) na hora de
   // exportar o PDF, e estado de loading do botão de exportação.
@@ -973,6 +976,45 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     },
   });
 
+  // Lista de orçamentos pra escolher a origem do cronograma a importar
+  // (ex: importar do orçamento original pra uma cópia recém-criada pra
+  // faturamento direto, sem precisar remontar o Gantt do zero).
+  const { data: allBudgetsList } = trpc.budgets.list.useQuery();
+  const otherBudgetsForImport = (allBudgetsList || []).filter((b: any) => b.id !== budgetId);
+
+  const importScheduleMutation = trpc.budgets.importScheduleFromBudget.useMutation({
+    onSuccess: (data) => {
+      utils.budgets.getStages.invalidate({ budgetId });
+      setLoadedDistributions(new Set());
+      setMonthlyDistribution({});
+      setIsImportScheduleDialogOpen(false);
+      setImportSourceBudgetId("");
+      if (data.unmatchedCount > 0) {
+        showToast.success(
+          `Cronograma importado! ${data.matchedCount} etapas atualizadas. ` +
+          `${data.unmatchedCount} etapa(s) sem correspondência (nome diferente): ${data.unmatchedNames.join(", ")}`
+        );
+      } else {
+        showToast.success(`Cronograma importado! ${data.matchedCount} etapas atualizadas.`);
+      }
+    },
+    onError: (error) => {
+      showToast.error(`Erro ao importar cronograma: ${error.message}`);
+    },
+  });
+
+  const handleImportSchedule = async () => {
+    if (!importSourceBudgetId) return;
+    try {
+      await importScheduleMutation.mutateAsync({
+        targetBudgetId: budgetId,
+        sourceBudgetId: Number(importSourceBudgetId),
+      });
+    } catch (error) {
+      console.error('Erro ao importar cronograma:', error);
+    }
+  };
+
   const handleMoveToPosition = async (stageId: number, targetPosition: number) => {
     try {
       await moveToPositionMutation.mutateAsync({
@@ -1277,6 +1319,14 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                 disabled={recalculateAllMutation.isPending || stages.filter((s: any) => s.startDate && s.endDate).length === 0}
               >
                 {recalculateAllMutation.isPending ? "Recalculando..." : "Recalcular Todas as Distribuições"}
+              </Button>
+              <Button
+                onClick={() => setIsImportScheduleDialogOpen(true)}
+                variant="outline"
+                size="sm"
+                title="Copia datas, duração e predecessoras de outro orçamento com etapas equivalentes (ex: uma cópia deste orçamento)"
+              >
+                Importar Cronograma de Outro Orçamento
               </Button>
             </div>
           </div>
@@ -1779,6 +1829,46 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={isImportScheduleDialogOpen} onOpenChange={setIsImportScheduleDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Importar Cronograma de Outro Orçamento</DialogTitle>
+            <DialogDescription>
+              Copia datas de início/término, duração e predecessoras das etapas do orçamento
+              escolhido pras etapas com o mesmo nome deste orçamento. Útil quando este orçamento
+              é uma cópia de outro (ex: versão para faturamento direto) e o cronograma já foi
+              montado no original. Etapas sem nome correspondente não são alteradas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Orçamento de origem</Label>
+            <Select value={importSourceBudgetId} onValueChange={setImportSourceBudgetId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione o orçamento com o cronograma pronto" />
+              </SelectTrigger>
+              <SelectContent>
+                {otherBudgetsForImport.map((b: any) => (
+                  <SelectItem key={b.id} value={String(b.id)}>
+                    {b.title}{b.client?.name ? ` — ${b.client.name}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsImportScheduleDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleImportSchedule}
+              disabled={!importSourceBudgetId || importScheduleMutation.isPending}
+            >
+              {importScheduleMutation.isPending ? "Importando..." : "Importar Cronograma"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
