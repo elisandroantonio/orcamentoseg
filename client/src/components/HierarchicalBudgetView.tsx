@@ -443,6 +443,31 @@ export default function HierarchicalBudgetView({
   // Separado do bdiConfigs (prop) para evitar conflito com re-fetches do backend durante a digitação
   const [localBdiValues, setLocalBdiValues] = useState<Record<string, string>>({});
 
+  // Sinaliza visualmente (engrenagem laranja) quando um item tem QUALQUER
+  // ajuste de BDI fora do padrão — Aplicar BDI ao Material/M.O. desmarcado,
+  // Encargos Sociais desmarcado, Incluir Material na Composição marcado, ou
+  // Ajuste Material/M.O. diferente de 0%. Usado no botão de "Configuração
+  // de BDI" pra ficar fácil notar, só de bater o olho na planilha, quais
+  // composições têm algo customizado sem precisar abrir cada uma.
+  const isBdiConfigCustomized = (config?: {
+    applyBdiToMaterial?: boolean;
+    applyBdiToLabor?: boolean;
+    aplicarEncargosSociais?: boolean;
+    materialAdjustment?: number;
+    laborAdjustment?: number;
+    includeMaterialOverride?: boolean;
+  }) => {
+    if (!config) return false;
+    return (
+      config.applyBdiToMaterial === false ||
+      config.applyBdiToLabor === false ||
+      config.aplicarEncargosSociais === false ||
+      config.includeMaterialOverride === true ||
+      (config.materialAdjustment ?? 0) !== 0 ||
+      (config.laborAdjustment ?? 0) !== 0
+    );
+  };
+
   // Estados para o formulário inline de Serviço Composto
   const [inlineCompositeStageId, setInlineCompositeStageId] = useState<number | null>(null);
   const [inlineCompositeName, setInlineCompositeName] = useState("");
@@ -730,8 +755,17 @@ export default function HierarchicalBudgetView({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0 text-slate-600 hover:text-slate-700 hover:bg-slate-50"
-                            title="Configurar BDI"
+                            className={cn(
+                              "h-8 w-8 p-0 hover:bg-orange-50",
+                              isBdiConfigCustomized(bdiConfigs[child.id])
+                                ? "text-orange-500 hover:text-orange-600"
+                                : "text-slate-600 hover:text-slate-700 hover:bg-slate-50"
+                            )}
+                            title={
+                              isBdiConfigCustomized(bdiConfigs[child.id])
+                                ? "Configurar BDI (com ajustes personalizados)"
+                                : "Configurar BDI"
+                            }
                           >
                             <Settings className="h-4 w-4" />
                           </Button>
@@ -1091,8 +1125,17 @@ export default function HierarchicalBudgetView({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-8 p-0 text-slate-600 hover:text-slate-700 hover:bg-slate-50"
-                    title="Configurar BDI"
+                    className={cn(
+                      "h-8 w-8 p-0 hover:bg-orange-50",
+                      isBdiConfigCustomized(bdiConfigs[item.id])
+                        ? "text-orange-500 hover:text-orange-600"
+                        : "text-slate-600 hover:text-slate-700 hover:bg-slate-50"
+                    )}
+                    title={
+                      isBdiConfigCustomized(bdiConfigs[item.id])
+                        ? "Configurar BDI (com ajustes personalizados)"
+                        : "Configurar BDI"
+                    }
                   >
                     <Settings className="h-4 w-4" />
                   </Button>
