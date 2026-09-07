@@ -167,6 +167,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const [loadedDistributions, setLoadedDistributions] = useState<Set<number>>(new Set());
   const [isImportScheduleDialogOpen, setIsImportScheduleDialogOpen] = useState(false);
   const [importSourceBudgetId, setImportSourceBudgetId] = useState<string>("");
+  const [isImportingSchedule, setIsImportingSchedule] = useState(false);
 
   // Curva S — ref pra "fotografar" o gráfico (recharts/SVG) na hora de
   // exportar o PDF, e estado de loading do botão de exportação.
@@ -982,36 +983,102 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const { data: allBudgetsList } = trpc.budgets.list.useQuery();
   const otherBudgetsForImport = (allBudgetsList || []).filter((b: any) => b.id !== budgetId);
 
-  const importScheduleMutation = trpc.budgets.importScheduleFromBudget.useMutation({
-    onSuccess: (data) => {
+  // Importa datas/duração/predecessoras das etapas casadas por nome (ver
+  // mutation no servidor). Sem callbacks aqui — o fluxo completo (que
+  // depois também importa a % de distribuição mensal) é orquestrado em
+  // handleImportSchedule, que mostra um único toast resumindo tudo no final.
+  const importScheduleMutation = trpc.budgets.importScheduleFromBudget.useMutation();
+
+  // Grava a % de distribuição mensal de várias etapas de uma vez (usado só
+  // pelo import — evita 1 toast "Distribuição salva" por etapa casada).
+  const saveDistributionsBulkMutation = trpc.budgetSchedule.saveMonthlyDistributionsBulk.useMutation();
+
+  const handleImportSchedule = async () => {
+    if (!importSourceBudgetId) return;
+    const sourceBudgetId = Number(importSourceBudgetId);
+    setIsImportingSchedule(true);
+    try {
+      // 1) Copia datas/duração/predecessoras das etapas casadas por nome
+      const scheduleResult = await importScheduleMutation.mutateAsync({
+        targetBudgetId: budgetId,
+        sourceBudgetId,
+      });
+
+      // 2) Busca a distribuição mensal (%) já configurada no orçamento de
+      // origem, e as etapas deste orçamento JÁ com as datas novas (pra
+      // gerar os mesmos meses e calcular o valor em R$ com o total com
+      // BDI de cada etapa NESTE orçamento, nunca com o do original).
+      const [sourceDistributions, freshTargetStages] = await Promise.all([
+        utils.budgetSchedule.getAllMonthlyDistributions.fetch({ budgetId: sourceBudgetId }),
+        utils.budgets.getStages.fetch({ budgetId }),
+      ]);
+
+      const distributionsBySourceStage = new Map<number, typeof sourceDistributions>();
+      sourceDistributions.forEach((d) => {
+        if (!distributionsBySourceStage.has(d.stageId)) distributionsBySourceStage.set(d.stageId, []);
+        distributionsBySourceStage.get(d.stageId)!.push(d);
+      });
+
+      const stagesToSave: {
+        stageId: number;
+        distributions: { periodIndex: number; periodLabel: string; percentage: number; value: number }[];
+      }[] = [];
+
+      for (const { sourceStageId, targetStageId } of scheduleResult.stageIdMap) {
+        const sourceDist = distributionsBySourceStage.get(sourceStageId);
+        if (!sourceDist || sourceDist.length === 0) continue;
+
+        const targetStage = (freshTargetStages as any[]).find((s: any) => s.id === targetStageId);
+        if (!targetStage || !targetStage.startDate || !targetStage.endDate) continue;
+
+        // Como as datas da etapa destino acabaram de ser copiadas 1:1 da
+        // origem, generateMonthsForStage devolve os MESMOS rótulos de mês
+        // ("fev. de 26" etc.) que a origem usou pra salvar a % — só precisa
+        // casar pelo rótulo, sem depender de periodIndex.
+        const percentByLabel = new Map(sourceDist.map((d) => [d.periodLabel, d.percentage]));
+        const months = generateMonthsForStage(targetStage);
+        const totalWithBdi = getStageBdiTotal(targetStage);
+        const distributions = months.map((month, index) => {
+          const percentage = percentByLabel.get(month) ?? 0;
+          return {
+            periodIndex: index,
+            periodLabel: month,
+            percentage,
+            value: (percentage / 100) * totalWithBdi,
+          };
+        });
+        stagesToSave.push({ stageId: targetStageId, distributions });
+      }
+
+      let distributionStagesCount = 0;
+      if (stagesToSave.length > 0) {
+        const bulkResult = await saveDistributionsBulkMutation.mutateAsync({
+          budgetId,
+          stages: stagesToSave,
+        });
+        distributionStagesCount = bulkResult.stagesUpdated;
+      }
+
       utils.budgets.getStages.invalidate({ budgetId });
+      utils.budgetSchedule.getAllMonthlyDistributions.invalidate({ budgetId });
       setLoadedDistributions(new Set());
       setMonthlyDistribution({});
       setIsImportScheduleDialogOpen(false);
       setImportSourceBudgetId("");
-      if (data.unmatchedCount > 0) {
-        showToast.success(
-          `Cronograma importado! ${data.matchedCount} etapas atualizadas. ` +
-          `${data.unmatchedCount} etapa(s) sem correspondência (nome diferente): ${data.unmatchedNames.join(", ")}`
-        );
-      } else {
-        showToast.success(`Cronograma importado! ${data.matchedCount} etapas atualizadas.`);
-      }
-    },
-    onError: (error) => {
-      showToast.error(`Erro ao importar cronograma: ${error.message}`);
-    },
-  });
 
-  const handleImportSchedule = async () => {
-    if (!importSourceBudgetId) return;
-    try {
-      await importScheduleMutation.mutateAsync({
-        targetBudgetId: budgetId,
-        sourceBudgetId: Number(importSourceBudgetId),
-      });
-    } catch (error) {
+      const parts = [`${scheduleResult.matchedCount} etapa(s) com datas importadas`];
+      if (distributionStagesCount > 0) {
+        parts.push(`${distributionStagesCount} com % de desembolso importada`);
+      }
+      if (scheduleResult.unmatchedCount > 0) {
+        parts.push(`${scheduleResult.unmatchedCount} sem correspondência (nome diferente): ${scheduleResult.unmatchedNames.join(", ")}`);
+      }
+      showToast.success(`Cronograma importado! ${parts.join(" · ")}`);
+    } catch (error: any) {
       console.error('Erro ao importar cronograma:', error);
+      showToast.error(`Erro ao importar cronograma: ${error.message}`);
+    } finally {
+      setIsImportingSchedule(false);
     }
   };
 
@@ -1324,7 +1391,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                 onClick={() => setIsImportScheduleDialogOpen(true)}
                 variant="outline"
                 size="sm"
-                title="Copia datas, duração e predecessoras de outro orçamento com etapas equivalentes (ex: uma cópia deste orçamento)"
+                title="Copia datas, duração, predecessoras e % de desembolso de outro orçamento com etapas equivalentes (ex: uma cópia deste orçamento)"
               >
                 Importar Cronograma de Outro Orçamento
               </Button>
@@ -1835,10 +1902,13 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
           <DialogHeader>
             <DialogTitle>Importar Cronograma de Outro Orçamento</DialogTitle>
             <DialogDescription>
-              Copia datas de início/término, duração e predecessoras das etapas do orçamento
-              escolhido pras etapas com o mesmo nome deste orçamento. Útil quando este orçamento
-              é uma cópia de outro (ex: versão para faturamento direto) e o cronograma já foi
-              montado no original. Etapas sem nome correspondente não são alteradas.
+              Copia datas de início/término, duração, predecessoras e a % de distribuição
+              mensal (Planilha de Desembolso) das etapas do orçamento escolhido pras etapas
+              com o mesmo nome deste orçamento. Útil quando este orçamento é uma cópia de
+              outro (ex: versão para faturamento direto) e o cronograma já foi montado no
+              original. Os valores em R$ da Planilha de Desembolso são recalculados com base
+              nos valores deste orçamento, nunca copiados do original. Etapas sem nome
+              correspondente não são alteradas.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-2">
@@ -1862,9 +1932,9 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
             </Button>
             <Button
               onClick={handleImportSchedule}
-              disabled={!importSourceBudgetId || importScheduleMutation.isPending}
+              disabled={!importSourceBudgetId || isImportingSchedule}
             >
-              {importScheduleMutation.isPending ? "Importando..." : "Importar Cronograma"}
+              {isImportingSchedule ? "Importando..." : "Importar Cronograma"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1146,10 +1146,20 @@ export const appRouter = router({
             .where(eq(budgetStages.id, newTargetId));
         }
 
+        // Devolve o mapeamento origem->destino pro cliente poder também
+        // importar a % de distribuição mensal (Planilha de Desembolso) das
+        // mesmas etapas casadas aqui, sem precisar re-fazer o casamento por
+        // nome de novo lá.
+        const stageIdMap = Array.from(sourceToTargetId.entries()).map(([sourceStageId, targetStageId]) => ({
+          sourceStageId,
+          targetStageId,
+        }));
+
         return {
           matchedCount,
           unmatchedCount: unmatchedNames.length,
           unmatchedNames,
+          stageIdMap,
         };
       }),
 
@@ -3815,7 +3825,56 @@ export const appRouter = router({
         
         return { success: true };
       }),
-    
+
+    // Salvar distribuição mensal de VÁRIAS etapas de uma vez (usado ao
+    // importar a % de distribuição de outro orçamento junto com o
+    // cronograma — evita 1 mutation + 1 toast por etapa).
+    saveMonthlyDistributionsBulk: protectedProcedure
+      .input(z.object({
+        budgetId: z.number(),
+        stages: z.array(z.object({
+          stageId: z.number(),
+          distributions: z.array(z.object({
+            periodIndex: z.number(),
+            periodLabel: z.string(),
+            percentage: z.number(),
+            value: z.number(),
+          })),
+        })),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await getDb();
+        if (!database) throw new Error("Database not available");
+
+        const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
+        if (!budget) throw new Error("Budget not found");
+
+        for (const stageEntry of input.stages) {
+          await database.delete(budgetMonthlyDistribution)
+            .where(
+              and(
+                eq(budgetMonthlyDistribution.budgetId, input.budgetId),
+                eq(budgetMonthlyDistribution.stageId, stageEntry.stageId)
+              )
+            );
+
+          if (stageEntry.distributions.length > 0) {
+            await database.insert(budgetMonthlyDistribution).values(
+              stageEntry.distributions.map(d => ({
+                budgetId: input.budgetId,
+                stageId: stageEntry.stageId,
+                periodIndex: d.periodIndex,
+                periodLabel: d.periodLabel,
+                percentage: d.percentage.toString(),
+                value: d.value.toString(),
+              }))
+            );
+          }
+        }
+
+        return { success: true, stagesUpdated: input.stages.length };
+      }),
+
     // Buscar distribuição mensal salva (Gantt)
     getMonthlyDistribution: protectedProcedure
       .input(z.object({
