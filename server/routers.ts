@@ -666,8 +666,11 @@ export const appRouter = router({
         const database = await getDb();
         if (!database) throw new Error("Database not available");
         
-        const { items, ...budgetData } = input;
-        
+        // totalCost/totalLaborHours nunca são gravados a partir do valor
+        // calculado no navegador (ver comentário em budgets.update) — o
+        // servidor recalcula com recalculateBudgetTotals logo abaixo.
+        const { items, totalCost: _clientTotalCost, totalLaborHours: _clientTotalLaborHours, ...budgetData } = input;
+
         // Gerar código automático (ORC-YYYY-NNN)
         const currentYear = new Date().getFullYear();
         const lastBudget = await database
@@ -719,7 +722,12 @@ export const appRouter = router({
             }
           }
         }
-        
+
+        // Calcula budget.totalCost com a fórmula correta (importante mesmo
+        // sem itens: já grava BDI% zerado/consistente em vez de deixar a
+        // coluna com o valor default).
+        await db.recalculateBudgetTotals(budgetId);
+
         return { id: budgetId };
       }),
     
@@ -767,11 +775,19 @@ export const appRouter = router({
         if (budgetData.taxes) processedData.taxes = parseFloat(budgetData.taxes);
         if (budgetData.risk) processedData.risk = parseFloat(budgetData.risk);
         if (budgetData.warranty) processedData.warranty = parseFloat(budgetData.warranty);
-        if (budgetData.totalCost) processedData.totalCost = parseFloat(budgetData.totalCost);
-        if (budgetData.totalLaborHours) processedData.totalLaborHours = parseFloat(budgetData.totalLaborHours);
         if (budgetData.includeMaterial !== undefined) processedData.includeMaterial = budgetData.includeMaterial ? 1 : 0;
         if (budgetData.initialPaymentPercent !== undefined) processedData.initialPaymentPercent = parseFloat(budgetData.initialPaymentPercent);
-        
+
+        // totalCost e totalLaborHours NUNCA são gravados a partir do valor
+        // calculado no navegador — isso causava divergência entre o valor
+        // salvo aqui (fórmula composta TCU/SINAPI, calculada no client) e o
+        // valor gravado por recalculateBudgetTotals em outras ações (editar
+        // item, criar composição etc.). Agora o servidor é a única fonte da
+        // verdade: recalculateBudgetTotals roda logo abaixo, sempre com a
+        // mesma fórmula usada em toda a aplicação (getStages, Comp. BDI).
+        delete processedData.totalCost;
+        delete processedData.totalLaborHours;
+
         // Remover workStatus do processedData (Drizzle não conhece essa coluna adicionada manualmente)
         const { workStatus: workStatusValue, ...drizzleData } = processedData;
         await database.update(budgets)
@@ -810,10 +826,15 @@ export const appRouter = router({
             }
           }
         }
-        
+
+        // Parâmetros de BDI (ou itens) podem ter mudado acima — recalcula
+        // budget.totalCost no servidor com a fórmula correta, em vez de
+        // deixar o valor antigo gravado até a próxima edição de item.
+        await db.recalculateBudgetTotals(input.id);
+
         return { success: true };
       }),
-    
+
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {

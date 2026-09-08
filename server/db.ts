@@ -664,17 +664,35 @@ export async function recalculateBudgetTotals(
   // Buscar parâmetros de BDI do orçamento
   const budget = await db.select().from(budgets).where(eq(budgets.id, budgetId)).limit(1);
   if (!budget[0]) return;
-  
+
+  const includeMaterial = Number(budget[0].includeMaterial ?? 1) !== 0;
   const socialCharges = Number(budget[0].socialCharges);
+  const adminCentral = Number(budget[0].adminCentral);
   const profit = Number(budget[0].profit);
   const taxes = Number(budget[0].taxes);
   const risk = Number(budget[0].risk);
   const warranty = Number(budget[0].warranty);
-  
+
+  // Fórmula composta TCU/SINAPI: BDI = [(1+AC)(1+G)(1+R)] / (1-L-I) - 1
+  // — EXATAMENTE a mesma fórmula usada em getStages (server/routers.ts) e em
+  // calcBDIMultiplier no client (BudgetForm.tsx / aba "Comp. BDI"). Este
+  // trecho grava budget.totalCost, então precisa ser idêntico aos outros
+  // lugares que mostram "Total c/ BDI" — antes usava uma fórmula aditiva
+  // simplificada (sem Administração Central, sem desconto por item, sem
+  // respeitar isenção de encargos sociais por item nem o toggle "Incluir
+  // Material"), o que produzia um total divergente do resto do app.
+  const calcBDIMultiplier = (additionalBdi = 0, discount = 0) => {
+    const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
+    const denominator = 1 - profit / 100 - taxes / 100;
+    const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
+    const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
+    return 1 + adjustedBDI;
+  };
+
   // Buscar configurações de BDI de todos os itens (rawQuery para evitar cache de prepared statements)
-  const bdiConfigs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number }> = {};
+  const bdiConfigs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount: number }> = {};
   const allBdiConfigs = await rawQuery(
-    `SELECT budgetItemId, applyBdiToMaterial, applyBdiToLabor, additionalIncrement
+    `SELECT budgetItemId, applyBdiToMaterial, applyBdiToLabor, additionalIncrement, discount
      FROM budget_item_bdi_config
      WHERE budgetItemId IN (${updatedItems.map(i => i.id).join(',') || '0'})`
   );
@@ -682,64 +700,80 @@ export async function recalculateBudgetTotals(
     bdiConfigs[config.budgetItemId] = {
       applyBdiToMaterial: Boolean(config.applyBdiToMaterial),
       applyBdiToLabor: Boolean(config.applyBdiToLabor),
-      additionalIncrement: Number(config.additionalIncrement || 0)
+      additionalIncrement: Number(config.additionalIncrement || 0),
+      discount: Number(config.discount || 0),
     };
   }
-  
-  // Calcular totalCost COM BDI aplicado
-  let totalMaterialWithBDI = 0;
-  let totalLaborWithBDI = 0;
-  let totalLaborHours = 0;
-  
-  for (const item of updatedItems) {
-    const qty = Number(item.quantity);
+
+  // Valor de material/M.O. de UM item (composição simples ou filho de um
+  // serviço composto) já com BDI aplicado por unidade — mesma lógica de
+  // itemUnitWithBdi em getStages.
+  const itemUnitWithBdi = (item: any) => {
     const material = Number(item.materialCost || 0);
     const labor = Number(item.laborCost || 0);
     const equipment = Number(item.equipmentCost || 0);
     const service = Number(item.serviceCost || 0);
     const other = Number(item.otherCost || 0);
-    
-    // Buscar configuração de BDI para este item
-    const itemConfig = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
-    
-    // BDI completo
-    const bdiMultiplier = 1 + (profit + taxes + risk + warranty) / 100;
-    
-    // Aplicar ajuste de material e M.O. (equalização)
-    const matAdjMultiplier = 1 + Number(item.materialAdjustment || 0) / 100;
-    const labAdjMultiplier = 1 + Number(item.laborAdjustment || 0) / 100;
-    const materialAdjusted = material * matAdjMultiplier;
-    const laborAdjusted = labor * labAdjMultiplier;
-    const laborWithChargesAdj = laborAdjusted * (1 + socialCharges / 100);
-    
-    // Aplicar BDI ao material apenas se configurado
-    const materialWithBDI = itemConfig.applyBdiToMaterial ? materialAdjusted * bdiMultiplier : materialAdjusted;
-    
-    // Aplicar BDI à mão de obra apenas se configurado
-    const laborWithBDI = itemConfig.applyBdiToLabor ? laborWithChargesAdj * bdiMultiplier : laborWithChargesAdj;
-    
-    // Equipment, service e other: aplicar BDI SEM encargos sociais
+
+    const effectiveMaterial = (includeMaterial || item.includeMaterialOverride === 1) ? material : 0;
+    const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+    const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0; // coluna já vem com default 1
+    const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
+    const bdiMultiplier = calcBDIMultiplier(config.additionalIncrement, config.discount);
+
+    const materialWithBDI = config.applyBdiToMaterial ? effectiveMaterial * bdiMultiplier : effectiveMaterial;
+    const laborWithBDI = config.applyBdiToLabor ? laborWithCharges * bdiMultiplier : laborWithCharges;
     const equipmentWithBDI = equipment * bdiMultiplier;
     const serviceWithBDI = service * bdiMultiplier;
     const otherWithBDI = other * bdiMultiplier;
-    
-    // Total de M.O. = labor com BDI + equipment/service/other com BDI
-    let totalLaborItem = laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI;
-    
-    // Aplicar incremento adicional se configurado
-    if (itemConfig.additionalIncrement > 0) {
-      const incrementMultiplier = 1 + itemConfig.additionalIncrement / 100;
-      totalLaborItem = totalLaborItem * incrementMultiplier;
+    const totalLabor = laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI;
+
+    return { materialWithBDI, totalLabor };
+  };
+
+  // Calcular totalCost COM BDI aplicado — só itens-raiz (sem parentItemId).
+  // Itens compostos ("composite") nunca têm custo próprio (fica em "0.00"),
+  // o valor real está nos filhos, somados aqui com a quantidade de CADA
+  // filho — mesma lógica de rootItemTotalWithBdi em getStages.
+  let totalMaterialWithBDI = 0;
+  let totalLaborWithBDI = 0;
+  let totalLaborHours = 0;
+
+  const childrenByParent = new Map<number, any[]>();
+  for (const item of updatedItems) {
+    if (item.parentItemId) {
+      const list = childrenByParent.get(item.parentItemId) || [];
+      list.push(item);
+      childrenByParent.set(item.parentItemId, list);
     }
-    
-    // Somar ao total geral
-    totalMaterialWithBDI += materialWithBDI * qty;
-    totalLaborWithBDI += totalLaborItem * qty;
-    totalLaborHours += Number(item.totalLaborHours);
   }
-  
+
+  const rootItems = updatedItems.filter((item: any) => !item.parentItemId);
+  for (const item of rootItems) {
+    if (item.type === 'composite') {
+      const children = childrenByParent.get(item.id) || [];
+      for (const child of children) {
+        const qty = Number(child.quantity || 0);
+        const { materialWithBDI, totalLabor } = itemUnitWithBdi(child);
+        const childLaborAdj = Number(child.laborAdjustment || 0);
+        totalMaterialWithBDI += materialWithBDI * qty;
+        totalLaborWithBDI += (totalLabor * (1 + childLaborAdj / 100)) * qty;
+        totalLaborHours += Number(child.totalLaborHours || 0);
+      }
+      continue;
+    }
+
+    const qty = Number(item.quantity || 0);
+    const { materialWithBDI, totalLabor } = itemUnitWithBdi(item);
+    const matAdjPct = Number(item.materialAdjustment || 0);
+    const laborAdjPct = Number(item.laborAdjustment || 0);
+    totalMaterialWithBDI += (materialWithBDI * qty) * (1 + matAdjPct / 100);
+    totalLaborWithBDI += (totalLabor * qty) * (1 + laborAdjPct / 100);
+    totalLaborHours += Number(item.totalLaborHours || 0);
+  }
+
   const totalCostWithBDI = totalMaterialWithBDI + totalLaborWithBDI;
-  
+
   await db.update(budgets)
     .set({ totalCost: totalCostWithBDI.toFixed(2), totalLaborHours: totalLaborHours.toFixed(2) })
     .where(eq(budgets.id, budgetId));

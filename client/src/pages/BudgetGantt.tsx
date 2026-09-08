@@ -1918,7 +1918,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
       </Card>
 
       <Dialog open={isImportScheduleDialogOpen} onOpenChange={setIsImportScheduleDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Importar Cronograma de Outro Orçamento</DialogTitle>
             <DialogDescription>
@@ -1933,7 +1933,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
           </DialogHeader>
           <div className="space-y-2 py-2">
             <Label>Orçamento de origem</Label>
-            <div className="border rounded-lg max-h-[320px] overflow-y-auto">
+            <div className="border rounded-lg max-h-[440px] overflow-y-auto">
               {groupedBudgetsForImport.length === 0 ? (
                 <div className="p-3 text-sm text-muted-foreground">Nenhum outro orçamento cadastrado.</div>
               ) : (
