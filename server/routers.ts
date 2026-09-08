@@ -1676,9 +1676,12 @@ export const appRouter = router({
         const rootItemTotalWithBdi = (item: (typeof allItems)[number]): number => {
           if (item.type === 'composite') {
             // Serviço composto: soma dos FILHOS (cada um com seu próprio BDI
-            // por unidade), sem materialAdjustment (mesmo comportamento —
-            // provavelmente não intencional — da aba Comp. BDI, que só aplica
-            // laborAdjustment aos filhos de um composto).
+            // por unidade). O Ajuste Material (%) é aplicado aos filhos igual
+            // ao Ajuste M.O. (%) logo abaixo — a aba Comp. BDI (client) já
+            // aplica os dois em qualquer item, filho ou raiz; antes só o
+            // ajuste de mão de obra era replicado aqui, subestimando o total
+            // sempre que um filho de composição tinha Ajuste Material
+            // configurado. Ver ORC-2026-047.
             const children = childrenByParent.get(item.id) || [];
             let mat = 0;
             let lab = 0;
@@ -1688,7 +1691,8 @@ export const appRouter = router({
               // o override por item) dentro de effectiveMaterial — não repetir
               // aqui, senão o override do filho seria anulado de novo.
               const { materialWithBDI, totalLabor } = itemUnitWithBdi(child);
-              mat += materialWithBDI * qty;
+              const childMaterialAdj = parseFloat(child.materialAdjustment || "0");
+              mat += (materialWithBDI * (1 + childMaterialAdj / 100)) * qty;
               const childLaborAdj = parseFloat(child.laborAdjustment || "0");
               lab += (totalLabor * (1 + childLaborAdj / 100)) * qty;
             }

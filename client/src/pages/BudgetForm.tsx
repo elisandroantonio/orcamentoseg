@@ -3209,25 +3209,6 @@ export default function BudgetForm() {
                     const bdiValue = totalWithBDI - totalWithoutBDI;
                     const bdiPercentage = totalWithoutBDI > 0 ? (bdiValue / totalWithoutBDI) * 100 : 0;
 
-                    // MARCADOR-DEBUG-BUILDCHECK-9AF3: prova se esta e a versao nova do
-                    // codigo rodando no navegador, e mostra os dados brutos que o item
-                    // 0 (primeiro de itemsForCardBdi) chegou no cliente via API. Remover
-                    // depois de confirmar o deploy.
-                    console.log('[MARCADOR-DEBUG-BUILDCHECK-9AF3][Comp.BDI]', {
-                      totalWithBDI,
-                      totalMaterialWithBDI,
-                      totalLaborWithBDI,
-                      qtdItens: itemsForCardBdi.length,
-                      amostraItem0: itemsForCardBdi[0] ? {
-                        id: itemsForCardBdi[0].id,
-                        materialAdjustment: itemsForCardBdi[0].materialAdjustment,
-                        laborAdjustment: itemsForCardBdi[0].laborAdjustment,
-                        aplicarEncargosSociais: itemsForCardBdi[0].aplicarEncargosSociais,
-                        includeMaterialOverride: itemsForCardBdi[0].includeMaterialOverride,
-                      } : null,
-                      timestamp: new Date().toISOString(),
-                    });
-                    
                     // Calcular percentuais
                     const materialPercentage = totalWithoutBDI > 0 ? (totalMaterialWithoutBDI / totalWithoutBDI) * 100 : 0;
                     const laborPercentage = totalWithoutBDI > 0 ? (totalLaborWithoutBDI / totalWithoutBDI) * 100 : 0;

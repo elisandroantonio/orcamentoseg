@@ -748,15 +748,32 @@ export async function recalculateBudgetTotals(
     }
   }
 
-  const rootItems = updatedItems.filter((item: any) => !item.parentItemId);
+  // TRAVA DE SEGURANÇA (ver ORC-2026-047): só conta itens cuja etapa
+  // realmente existe no orçamento — o MESMO critério que getStages usa pra
+  // montar a árvore que o usuário vê em Comp. BDI / Resumo do Orçamento. Sem
+  // isso, um item cuja etapa foi excluída (por bug — já corrigido em
+  // deleteStage — ou por qualquer outro caminho futuro que ainda não
+  // mapeamos: duplicação de orçamento, importação, etc.) fica invisível na
+  // tela mas continuava sendo somado aqui, inflando budgets.totalCost sem
+  // que ninguém percebesse. Com isso, o total gravado NUNCA pode divergir
+  // do que a tela mostra, independente da causa do item ter ficado órfão.
+  const validStageIds = new Set(stages.map((s) => s.id));
+  const rootItems = updatedItems.filter((item: any) => !item.parentItemId && item.stageId && validStageIds.has(item.stageId));
   for (const item of rootItems) {
     if (item.type === 'composite') {
       const children = childrenByParent.get(item.id) || [];
       for (const child of children) {
         const qty = Number(child.quantity || 0);
         const { materialWithBDI, totalLabor } = itemUnitWithBdi(child);
+        // Ajuste Material (%) precisa ser aplicado nos filhos de composição
+        // igual já é feito com o Ajuste M.O. (%) logo abaixo — e igual o
+        // cliente (Comp. BDI) já faz. Antes só o ajuste de mão de obra era
+        // aplicado aqui; o de material era ignorado nos filhos (ficava só
+        // nos itens-raiz), fazendo o servidor subestimar o total sempre que
+        // um filho de composição tinha Ajuste Material configurado.
+        const childMaterialAdj = Number(child.materialAdjustment || 0);
         const childLaborAdj = Number(child.laborAdjustment || 0);
-        totalMaterialWithBDI += materialWithBDI * qty;
+        totalMaterialWithBDI += (materialWithBDI * (1 + childMaterialAdj / 100)) * qty;
         totalLaborWithBDI += (totalLabor * (1 + childLaborAdj / 100)) * qty;
         totalLaborHours += Number(child.totalLaborHours || 0);
       }
