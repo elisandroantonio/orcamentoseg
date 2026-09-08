@@ -2076,17 +2076,47 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const database = await getDb();
         if (!database) throw new Error("Database not available");
-        
+
         // Verificar se a etapa pertence a um orçamento do usuário
         const stage = await database.select().from(budgetStages).where(eq(budgetStages.id, input.id)).limit(1);
         if (!stage[0]) throw new Error("Stage not found");
-        
+
         const budget = await db.getBudgetById(stage[0].budgetId, ctx.user.id);
         if (!budget) throw new Error("Budget not found");
-        
+
+        // Coletar esta etapa + todas as sub-etapas (recursivo). O FK de
+        // budgetStages.parentStageId é "on delete cascade" (remove sub-etapas
+        // automaticamente), mas o FK de budgetItems.stageId é "on delete set
+        // null" — ou seja, SEM isto, os itens de uma etapa excluída não eram
+        // removidos: só ficavam com stageId=NULL, viravam "fantasmas"
+        // invisíveis na UI (getStages agrupa por etapa e ignora stageId
+        // nulo/inexistente) mas continuavam sendo somados em
+        // recalculateBudgetTotals (que não filtra por etapa), inflando
+        // silenciosamente o total do orçamento. Ver ORC-2026-047.
+        const allStages = await database.select().from(budgetStages).where(eq(budgetStages.budgetId, stage[0].budgetId));
+        const idsToDelete = new Set<number>([input.id]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const s of allStages) {
+            if (s.parentStageId && idsToDelete.has(s.parentStageId) && !idsToDelete.has(s.id)) {
+              idsToDelete.add(s.id);
+              changed = true;
+            }
+          }
+        }
+
+        // Excluir os itens dessas etapas ANTES de excluir as etapas
+        for (const stageId of Array.from(idsToDelete)) {
+          await database.delete(budgetItems).where(eq(budgetItems.stageId, stageId));
+        }
+
         // Remover etapa (cascade removerá sub-etapas)
         await database.delete(budgetStages).where(eq(budgetStages.id, input.id));
-        
+
+        // Recalcular o total do orçamento sem os itens removidos
+        await db.recalculateBudgetTotals(stage[0].budgetId);
+
         return { success: true };
       }),
     
