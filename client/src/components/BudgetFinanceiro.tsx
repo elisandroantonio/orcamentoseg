@@ -174,10 +174,18 @@ function OriginalBudgetTab({
   });
 
   const calcBDIMultiplier = useCallback((additionalBdi = 0, discount = 0) => {
+    // Fórmula canônica (igual server/db.ts, routers.ts getStages, BudgetForm.tsx,
+    // HierarchicalBudgetView.tsx): o incremento/desconto por item é somado/subtraído
+    // do percentual de BDI (aditivo), não multiplicado pelo multiplicador inteiro.
+    // A versão anterior aqui fazia baseBdi * (1+incremento%) * (1-desconto%), que dá
+    // um resultado diferente do usado em todas as outras telas sempre que um item
+    // tinha Incremento Adicional/Desconto configurado no Comp. BDI — fazendo o total
+    // "Medições" divergir do "Resumo do Orçamento" pro mesmo item.
     const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
     const denominator = 1 - profit / 100 - taxes / 100;
-    const baseBdi = denominator > 0 ? numerator / denominator : 1;
-    return baseBdi * (1 + additionalBdi / 100) * (1 - discount / 100);
+    const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
+    const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
+    return 1 + adjustedBDI;
   }, [adminCentral, warranty, risk, profit, taxes]);
 
   const calcItemTotalWithBdi = useCallback((item: BudgetItem): number => {
@@ -198,7 +206,14 @@ function OriginalBudgetTab({
     const eqWithBdi = equipment * bdiMult;
     const svcWithBdi = service * bdiMult;
     const othWithBdi = other * bdiMult;
-    return (matWithBdi + laborWithBdi + eqWithBdi + svcWithBdi + othWithBdi) * qty;
+    const totalLaborBucket = laborWithBdi + eqWithBdi + svcWithBdi + othWithBdi;
+    // Ajuste Material (%) e Ajuste M.O. (%) (mesmos campos usados em Comp. BDI e
+    // Resumo do Orçamento) faltavam por completo aqui — a tela de Medições somava
+    // o item sem os ajustes manuais configurados, divergindo do valor real do
+    // contrato sempre que um item tinha algum desses ajustes.
+    const matAdjPct = Number((item as any).materialAdjustment) || 0;
+    const laborAdjPct = Number((item as any).laborAdjustment) || 0;
+    return (matWithBdi * (1 + matAdjPct / 100) + totalLaborBucket * (1 + laborAdjPct / 100)) * qty;
   }, [bdiConfigs, calcBDIMultiplier, socialCharges, includeMaterial]);
 
   const measurementMap = useMemo(() => {
@@ -640,35 +655,54 @@ function AdditiveMeasurementTab({
     onError: (e) => toast.error("Erro ao salvar: " + e.message),
   });
 
-  const calcBDIMultiplier = useCallback((additionalBdi = 0, discount = 0) => {
+  // Ratio "puro" de BDI (sem incremento/desconto embutido) — igual
+  // additives.ts (recalcAdditiveTotals) e AditivosTab.tsx (calcBDIMultiplier),
+  // que são a fonte de verdade do total gravado em
+  // budget_additives.totalCostWithBdi. Incremento/desconto legado é aplicado
+  // como fator multiplicativo SEPARADO no final (combinedMultiplier), não
+  // embutido aqui — ver comentário em calcAdditiveItemTotal.
+  const calcBDIMultiplier = useCallback((): number => {
     const { adminCentral, warranty, risk, profit, taxes } = budgetParams;
     const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
     const denominator = 1 - profit / 100 - taxes / 100;
-    const baseBdi = denominator > 0 ? numerator / denominator : 1;
-    return baseBdi * (1 + additionalBdi / 100) * (1 - discount / 100);
+    return denominator > 0 ? numerator / denominator : 1;
   }, [budgetParams]);
 
   const calcAdditiveItemTotal = useCallback((item: any): number => {
+    // Mesmo algoritmo de recalcAdditiveTotals (server/routers/additives.ts) e
+    // calcItemBdiBreakdown (AditivosTab.tsx) — essa cópia daqui estava
+    // divergente em dois pontos:
+    // 1) faltava aplicar materialAdjustment/laborAdjustment (Ajuste Material/
+    //    M.O. %), os campos que substituíram Incremento/Desconto na tela de
+    //    edição do aditivo (ver tarefa "Aditivos: trocar Incremento/Desconto
+    //    por Ajuste Material/M.O.").
+    // 2) para aditivos, equipment/service/other entram no MESMO "balde" que
+    //    mão de obra (recebem laborAdjustment e encargos sociais junto) — não
+    //    são um balde separado como nos itens normais do orçamento. A versão
+    //    anterior tratava como 5 baldes separados, igual item normal, o que
+    //    está errado especificamente para aditivos.
     const qty = Number(item.quantity || 1);
     const rawMaterial = Number(item.materialCost || 0);
-    const material = Number(item.includeMaterial ?? 1) ? rawMaterial : 0;
-    const labor = Number(item.laborCost || 0);
-    const equipment = Number(item.equipmentCost || 0);
-    const service = Number(item.serviceCost || 0);
-    const other = Number(item.otherCost || 0);
+    const materialBase = Number(item.includeMaterial ?? 1) ? rawMaterial : 0;
+    const laborBase = Number(item.laborCost || 0)
+      + Number(item.equipmentCost || 0)
+      + Number(item.serviceCost || 0)
+      + Number(item.otherCost || 0);
+    const matAdjMultiplier = 1 + (Number(item.materialAdjustment) || 0) / 100;
+    const labAdjMultiplier = 1 + (Number(item.laborAdjustment) || 0) / 100;
+    const material = materialBase * matAdjMultiplier;
+    const labor = laborBase * labAdjMultiplier;
     const applyBdiToMaterial = Number(item.applyBdiToMaterial ?? 1);
     const applyBdiToLabor = Number(item.applyBdiToLabor ?? 1);
     const aplicarEncargos = Number(item.aplicarEncargosSociais ?? 1);
-    const additionalIncrement = Number(item.additionalIncrement || 0);
-    const discount = Number(item.discount || 0);
-    const bdiMult = calcBDIMultiplier(additionalIncrement, discount);
     const laborWithCharges = labor * (1 + (aplicarEncargos ? budgetParams.socialCharges : 0) / 100);
-    const matWithBdi = applyBdiToMaterial ? material * bdiMult : material;
-    const laborWithBdi = applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges;
-    const eqWithBdi = equipment * bdiMult;
-    const svcWithBdi = service * bdiMult;
-    const othWithBdi = other * bdiMult;
-    return (matWithBdi + laborWithBdi + eqWithBdi + svcWithBdi + othWithBdi) * qty;
+    const bdiMult = calcBDIMultiplier();
+    const matFinal = applyBdiToMaterial ? material * bdiMult : material;
+    const labFinal = applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges;
+    // Compat: incremento/desconto legado (pré-migração), fica neutro (1) se o
+    // item nunca teve esses campos preenchidos.
+    const combinedMultiplier = (1 + (Number(item.additionalIncrement) || 0) / 100) * (1 - (Number(item.discount) || 0) / 100);
+    return (matFinal + labFinal) * combinedMultiplier * qty;
   }, [calcBDIMultiplier, budgetParams.socialCharges]);
 
   // Mapa de medições do período atual
@@ -1066,11 +1100,17 @@ export function BudgetFinanceiro({
   const baseContractTotalFallback = useMemo(() => {
     if (totalContratoWithBdi !== undefined) return totalContratoWithBdi;
     let total = 0;
+    // Fórmula canônica (igual server/db.ts, getStages, BudgetForm.tsx) — a versão
+    // anterior aqui era multiplicativa (baseBdi*(1+incr%)*(1-desc%)) em vez de
+    // aditiva, e faltava materialAdjustment/laborAdjustment nos filhos e itens
+    // simples. Isso só é usado como fallback quando totalContratoWithBdi não é
+    // passado pelo componente pai, mas precisa bater com o resto mesmo assim.
     const calcBDI = (additionalBdi = 0, discount = 0) => {
       const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
       const denominator = 1 - profit / 100 - taxes / 100;
-      const baseBdi = denominator > 0 ? numerator / denominator : 1;
-      return baseBdi * (1 + additionalBdi / 100) * (1 - discount / 100);
+      const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
+      const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
+      return 1 + adjustedBDI;
     };
     const rootStages = stages.filter(s => !s.parentStageId);
     const collectItems = (stageList: BudgetStage[]) => {
@@ -1085,13 +1125,15 @@ export function BudgetFinanceiro({
               const material = (includeMaterial || Number((child as any).includeMaterialOverride) === 1) ? Number(child.materialCost) : 0;
               const bdiMult = calcBDI(config.additionalIncrement, config.discount || 0);
               const laborWithCharges = labor * (1 + (Number((child as any).aplicarEncargosSociais) !== 0 ? socialCharges : 0) / 100);
-              total += (
-                (config.applyBdiToMaterial ? material * bdiMult : material) +
+              const childMaterialAdj = Number((child as any).materialAdjustment) || 0;
+              const childLaborAdj = Number((child as any).laborAdjustment) || 0;
+              const matPart = config.applyBdiToMaterial ? material * bdiMult : material;
+              const laborPart =
                 (config.applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges) +
                 Number(child.equipmentCost) * bdiMult +
                 Number(child.serviceCost) * bdiMult +
-                Number(child.otherCost) * bdiMult
-              ) * qty;
+                Number(child.otherCost) * bdiMult;
+              total += (matPart * (1 + childMaterialAdj / 100) + laborPart * (1 + childLaborAdj / 100)) * qty;
             });
           } else {
             const qty = Number(item.quantity);
@@ -1101,13 +1143,15 @@ export function BudgetFinanceiro({
             const material = (includeMaterial || Number((item as any).includeMaterialOverride) === 1) ? Number(item.materialCost) : 0;
             const bdiMult = calcBDI(config.additionalIncrement, config.discount || 0);
             const laborWithCharges = labor * (1 + (Number((item as any).aplicarEncargosSociais) !== 0 ? socialCharges : 0) / 100);
-            total += (
-              (config.applyBdiToMaterial ? material * bdiMult : material) +
+            const matAdjPct = Number((item as any).materialAdjustment) || 0;
+            const laborAdjPct = Number((item as any).laborAdjustment) || 0;
+            const matPart = config.applyBdiToMaterial ? material * bdiMult : material;
+            const laborPart =
               (config.applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges) +
               Number(item.equipmentCost) * bdiMult +
               Number(item.serviceCost) * bdiMult +
-              Number(item.otherCost) * bdiMult
-            ) * qty;
+              Number(item.otherCost) * bdiMult;
+            total += (matPart * (1 + matAdjPct / 100) + laborPart * (1 + laborAdjPct / 100)) * qty;
           }
         });
         const subStages = stages.filter(s => s.parentStageId === stage.id);
@@ -1136,11 +1180,17 @@ export function BudgetFinanceiro({
 
       // ── Parâmetros BDI ────────────────────────────────────────────────────
       const { socialCharges: sc, adminCentral: ac, profit: pr, taxes: tx, risk: rk, warranty: wa } = serverData.budget;
+      // Fórmula canônica — igual server/db.ts, getStages, BudgetForm.tsx (mesmo
+      // ajuste feito acima: era multiplicativa e faltava materialAdjustment/
+      // laborAdjustment, o que fazia o PDF do Boletim de Medição sair com
+      // valores diferentes do "Resumo do Orçamento" sempre que um item tinha
+      // algum ajuste manual configurado no Comp. BDI).
       const calcBDIMult = (additionalBdi = 0, discount = 0) => {
         const num = (1 + ac / 100) * (1 + wa / 100) * (1 + rk / 100);
         const den = 1 - pr / 100 - tx / 100;
-        const base = den > 0 ? num / den : 1;
-        return base * (1 + additionalBdi / 100) * (1 - discount / 100);
+        const baseBDI = den > 0 ? (num / den - 1) : 0;
+        const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
+        return 1 + adjustedBDI;
       };
 
       const includeMat = serverData.budget.includeMaterial;
@@ -1157,7 +1207,10 @@ export function BudgetFinanceiro({
         const laborWithCharges = lab * (1 + (Number(item.aplicarEncargosSociais) !== 0 ? sc : 0) / 100);
         const matB = cfg.applyBdiToMaterial ? mat * bdiMult : mat;
         const labB = cfg.applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges;
-        return (matB + labB + eq * bdiMult + svc * bdiMult + oth * bdiMult) * qty;
+        const laborBucket = labB + eq * bdiMult + svc * bdiMult + oth * bdiMult;
+        const matAdjPct = Number(item.materialAdjustment) || 0;
+        const laborAdjPct = Number(item.laborAdjustment) || 0;
+        return (matB * (1 + matAdjPct / 100) + laborBucket * (1 + laborAdjPct / 100)) * qty;
       };
 
       // ── Mapas de medição ─────────────────────────────────────────────────
@@ -1371,24 +1424,41 @@ export function BudgetFinanceiro({
           }
         });
 
-        // Calcular total do aditivo por item
+        // Calcular total do aditivo por item — mesmo algoritmo de
+        // recalcAdditiveTotals (server/routers/additives.ts) e AditivosTab.tsx,
+        // NÃO o mesmo modelo dos itens normais do orçamento: pra aditivos,
+        // equipment/service/other entram no mesmo "balde" que mão de obra
+        // (recebem laborAdjustment e encargos sociais junto), o BDI é a razão
+        // pura (sem incremento/desconto embutido) e materialAdjustment/
+        // laborAdjustment (Ajuste Material/M.O. %) precisam ser aplicados —
+        // faltavam aqui, então o PDF do Boletim saía com o valor do aditivo
+        // sem os ajustes manuais configurados na edição do aditivo.
+        const additiveBdiRatio = (() => {
+          const num = (1 + ac / 100) * (1 + wa / 100) * (1 + rk / 100);
+          const den = 1 - pr / 100 - tx / 100;
+          return den > 0 ? num / den : 1;
+        })();
         const calcAddItemTotal = (item: any): number => {
           const qty = Number(item.quantity || 1);
-          const mat = Number(item.includeMaterial ?? 1) ? Number(item.materialCost || item.materialcost || 0) : 0;
-          const lab = Number(item.laborCost || item.laborcost || 0);
-          const eq = Number(item.equipmentCost || item.equipmentcost || 0);
-          const svc = Number(item.serviceCost || item.servicecost || 0);
-          const oth = Number(item.otherCost || item.othercost || 0);
+          const materialBase = Number(item.includeMaterial ?? 1) ? Number(item.materialCost || item.materialcost || 0) : 0;
+          const laborBase = Number(item.laborCost || item.laborcost || 0)
+            + Number(item.equipmentCost || item.equipmentcost || 0)
+            + Number(item.serviceCost || item.servicecost || 0)
+            + Number(item.otherCost || item.othercost || 0);
+          const matAdjMultiplier = 1 + (Number(item.materialAdjustment ?? item.materialadjustment) || 0) / 100;
+          const labAdjMultiplier = 1 + (Number(item.laborAdjustment ?? item.laboradjustment) || 0) / 100;
+          const material = materialBase * matAdjMultiplier;
+          const labor = laborBase * labAdjMultiplier;
           const applyBdiMat = Number(item.applyBdiToMaterial ?? item.applybditomaterial ?? 1);
           const applyBdiLab = Number(item.applyBdiToLabor ?? item.applybditolabor ?? 1);
           const aplicarEnc = Number(item.aplicarEncargosSociais ?? item.aplicarencargossociais ?? 1);
           const addInc = Number(item.additionalIncrement || item.additionalincrement || 0);
           const disc = Number(item.discount || 0);
-          const bdiMult = calcBDIMult(addInc, disc);
-          const labWithCharges = lab * (1 + (aplicarEnc ? sc : 0) / 100);
-          const matB = applyBdiMat ? mat * bdiMult : mat;
-          const labB = applyBdiLab ? labWithCharges * bdiMult : labWithCharges;
-          return (matB + labB + eq * bdiMult + svc * bdiMult + oth * bdiMult) * qty;
+          const laborWithCharges = labor * (1 + (aplicarEnc ? sc : 0) / 100);
+          const matFinal = applyBdiMat ? material * additiveBdiRatio : material;
+          const labFinal = applyBdiLab ? laborWithCharges * additiveBdiRatio : laborWithCharges;
+          const combinedMultiplier = (1 + addInc / 100) * (1 - disc / 100);
+          return (matFinal + labFinal) * combinedMultiplier * qty;
         };
 
         // Montar hierarquia de etapas do aditivo

@@ -49,11 +49,16 @@ export function useSaldoMedido(
   const { socialCharges, adminCentral, profit, taxes, risk, warranty, includeMaterial } = params;
 
   return useMemo(() => {
+    // Fórmula canônica (igual server/db.ts, getStages, BudgetForm.tsx) — era
+    // multiplicativa (baseBdi*(1+incr%)*(1-desc%)) em vez de aditiva, o que
+    // divergia do resto do app sempre que um item tinha Incremento Adicional/
+    // Desconto configurado no Comp. BDI.
     const calcBDIMultiplier = (additionalBdi = 0, discount = 0) => {
       const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
       const denominator = 1 - profit / 100 - taxes / 100;
-      const baseBdi = denominator > 0 ? numerator / denominator : 1;
-      return baseBdi * (1 + additionalBdi / 100) * (1 - discount / 100);
+      const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
+      const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
+      return 1 + adjustedBDI;
     };
 
     const calcItemTotalWithBdi = (item: any): number => {
@@ -75,7 +80,12 @@ export function useSaldoMedido(
       const eqWithBdi = equipment * bdiMult;
       const svcWithBdi = service * bdiMult;
       const othWithBdi = other * bdiMult;
-      return (matWithBdi + laborWithBdi + eqWithBdi + svcWithBdi + othWithBdi) * qty;
+      const laborBucket = laborWithBdi + eqWithBdi + svcWithBdi + othWithBdi;
+      // Ajuste Material (%) / Ajuste M.O. (%) faltavam por completo — o
+      // "Saldo Medido" saía sem os ajustes manuais configurados no item.
+      const matAdjPct = Number(item.materialAdjustment) || 0;
+      const laborAdjPct = Number(item.laborAdjustment) || 0;
+      return (matWithBdi * (1 + matAdjPct / 100) + laborBucket * (1 + laborAdjPct / 100)) * qty;
     };
 
     const accumPercentByItem: Record<number, number> = {};
@@ -145,10 +155,22 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
     if (datedStages.length === 0) return null;
 
     const encargos = parseFloat(budget?.socialCharges || "0") / 100;
+    const adminCentral = parseFloat(budget?.adminCentral || "0") / 100;
     const lucro = parseFloat(budget?.profit || "0") / 100;
     const impostos = parseFloat(budget?.taxes || "0") / 100;
     const risco = parseFloat(budget?.risk || "0") / 100;
     const garantia = parseFloat(budget?.warranty || "0") / 100;
+    // Fórmula de BDI estava estruturalmente errada: nunca lia adminCentral
+    // (faltava por completo) e tratava lucro/impostos como fatores
+    // multiplicativos (1+lucro)*(1+impostos) em vez do denominador
+    // 1-lucro-impostos da fórmula real (Comp. BDI / server/db.ts). Isso fazia
+    // a curva "Realizado" (que usa esta função) usar um percentual de BDI bem
+    // diferente do usado na curva "Planejado" (que usa stage.totalWithBdi,
+    // calculado corretamente no servidor) — inflando ou reduzindo o "Avanço
+    // Físico" mostrado sem relação com o progresso real da obra.
+    // Não replica overrides por item (bdiConfigs) de propósito — mesma
+    // simplificação documentada acima, pra ficar leve numa lista com vários
+    // orçamentos (Home.tsx) — mas a fórmula base agora bate com a real.
     const itemTotalWithBdiLocal = (item: any) => {
       const qty = parseFloat(item.quantity || "0");
       const material = parseFloat(item.materialCost || "0");
@@ -156,10 +178,15 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
       const equipment = parseFloat(item.equipmentCost || "0");
       const service = parseFloat(item.serviceCost || "0");
       const other = parseFloat(item.otherCost || "0");
+      const matAdjPct = parseFloat(item.materialAdjustment || "0") / 100;
+      const laborAdjPct = parseFloat(item.laborAdjustment || "0") / 100;
       const laborWithEncargos = labor * (1 + encargos);
-      const subtotal = material + laborWithEncargos + equipment + service + other;
-      const totalWithAllBdi = subtotal * (1 + lucro) * (1 + impostos) * (1 + risco) * (1 + garantia);
-      return totalWithAllBdi * qty;
+      const laborBucket = (laborWithEncargos + equipment + service + other) * (1 + laborAdjPct);
+      const materialBucket = material * (1 + matAdjPct);
+      const numerator = (1 + adminCentral) * (1 + garantia) * (1 + risco);
+      const denominator = 1 - lucro - impostos;
+      const bdiRatio = denominator > 0 ? numerator / denominator : 1;
+      return (materialBucket + laborBucket) * bdiRatio * qty;
     };
 
     const measurableItems: any[] = [];

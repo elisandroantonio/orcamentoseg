@@ -655,7 +655,6 @@ export default function BudgetForm() {
           const childConfig = bdiConfigs[child.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
           const childAplicarEncargos = Number(child.aplicarEncargosSociais) !== 0;
           const childLaborWithCharges = childLabor * (1 + (childAplicarEncargos ? socialCharges : 0) / 100);
-          const childTotalLabor = childLaborWithCharges + childEquipment + childService + childOther;
           const childAdditionalBdi = Number(childConfig.additionalIncrement) || 0;
           const childDiscount = Number(childConfig.discount) || 0;
           const childLaborAdjPct = Number(child.laborAdjustment) || 0;
@@ -663,8 +662,16 @@ export default function BudgetForm() {
           const childMatAdjPct = Number(childConfig.materialAdjustment) || 0;
           const childEffectiveMaterialAdj = childEffectiveMaterial * (1 + childMatAdjPct / 100);
           const childMaterialWithBDI = childConfig.applyBdiToMaterial ? (childEffectiveMaterialAdj * childBdiMultiplier) : childEffectiveMaterialAdj;
-          const childLaborWithBDI = childConfig.applyBdiToLabor ? (childTotalLabor * childBdiMultiplier) : childTotalLabor;
-          const childLaborFinal = childLaborWithBDI * (1 + childLaborAdjPct / 100);
+          // Equipment/service/other sempre recebem BDI (igual a calculateTotalWithBDI acima);
+          // só a M.O. propriamente dita é condicional a applyBdiToLabor. Antes este bloco
+          // somava equipment/service/other à M.O. ANTES do BDI, tornando o BDI deles
+          // indevidamente condicional a applyBdiToLabor — bug corrigido aqui.
+          const childLaborWithBDI = childConfig.applyBdiToLabor ? (childLaborWithCharges * childBdiMultiplier) : childLaborWithCharges;
+          const childEqWithBDI = childEquipment * childBdiMultiplier;
+          const childSvcWithBDI = childService * childBdiMultiplier;
+          const childOthWithBDI = childOther * childBdiMultiplier;
+          const childLaborBucket = childLaborWithBDI + childEqWithBDI + childSvcWithBDI + childOthWithBDI;
+          const childLaborFinal = childLaborBucket * (1 + childLaborAdjPct / 100);
           return {
             ...child,
             materialCost: childMaterialWithBDI.toFixed(2),
@@ -709,7 +716,6 @@ export default function BudgetForm() {
       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
       const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
-      const totalLabor = laborWithCharges + equipment + service + other;
       const additionalBdi = Number(itemConfig.additionalIncrement) || 0;
       const discount = Number(itemConfig.discount) || 0;
       const laborAdjPct = Number(item.laborAdjustment) || 0;
@@ -717,8 +723,14 @@ export default function BudgetForm() {
       const matAdjPctExport = Number(itemConfig.materialAdjustment) || 0;
       const effectiveMaterialAdjExport = effectiveMaterial * (1 + matAdjPctExport / 100);
       const materialWithBDI = itemConfig.applyBdiToMaterial ? (effectiveMaterialAdjExport * bdiMultiplier) : effectiveMaterialAdjExport;
-      const laborWithBDI = itemConfig.applyBdiToLabor ? (totalLabor * bdiMultiplier) : totalLabor;
-      const laborFinal = laborWithBDI * (1 + laborAdjPct / 100);
+      // Equipment/service/other sempre recebem BDI, só a M.O. é condicional a
+      // applyBdiToLabor (mesma correção aplicada acima nos filhos de compostos).
+      const laborWithBDI = itemConfig.applyBdiToLabor ? (laborWithCharges * bdiMultiplier) : laborWithCharges;
+      const eqWithBDIExport = equipment * bdiMultiplier;
+      const svcWithBDIExport = service * bdiMultiplier;
+      const othWithBDIExport = other * bdiMultiplier;
+      const laborBucketExport = laborWithBDI + eqWithBDIExport + svcWithBDIExport + othWithBDIExport;
+      const laborFinal = laborBucketExport * (1 + laborAdjPct / 100);
       return {
         ...item,
         materialCost: materialWithBDI.toFixed(2),
