@@ -593,28 +593,40 @@ export default function BudgetForm() {
       // BDI composto TCU/SINAPI
       const bdiMultiplier = calcBDIMultiplier();
       
-      // Aplicar BDI ao material apenas se configurado (usando effectiveMaterial que respeita includeMaterial)
-      const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterial * bdiMultiplier : effectiveMaterial;
-      
+      // Aplicar materialAdjustment antes do BDI — direto de item.materialAdjustment
+      // (budget_items), mesma fonte usada pelo servidor em recalculateBudgetTotals/
+      // getStages. NÃO ler de bdiConfigs (budget_item_bdi_config), que tem uma cópia
+      // separada desse campo e pode ficar dessincronizada.
+      const matAdjPct = Number(item.materialAdjustment) || 0;
+      const effectiveMaterialAdj = effectiveMaterial * (1 + matAdjPct / 100);
+      // Aplicar BDI ao material apenas se configurado (usando effectiveMaterialAdj que respeita includeMaterial + ajuste)
+      const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterialAdj * bdiMultiplier : effectiveMaterialAdj;
+
       // Aplicar BDI à mão de obra apenas se configurado
       const laborWithBDI = itemConfig.applyBdiToLabor ? laborWithCharges * bdiMultiplier : laborWithCharges;
-      
+
       // Equipment, service e other: aplicar BDI SEM encargos sociais
       const equipmentWithBDI = equipment * bdiMultiplier;
       const serviceWithBDI = service * bdiMultiplier;
       const otherWithBDI = other * bdiMultiplier;
-      
-      // Total de M.O. = labor com BDI + equipment/service/other com BDI
-      let totalLaborItem = laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI;
-      
-      // Aplicar incremento adicional e desconto se configurado
+
+      // Ajuste M.O. (%) por item — direto de item.laborAdjustment (budget_items)
+      const laborAdjPct = Number(item.laborAdjustment) || 0;
+
+      // Total de M.O. = labor com BDI + equipment/service/other com BDI, com ajuste M.O.
+      let totalLaborItem = (laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI) * (1 + laborAdjPct / 100);
+
+      // Aplicar incremento adicional e desconto se configurado (já embutido em bdiMultiplier
+      // via calcBDIMultiplier(additionalIncrement, discount) seria o ideal, mas esta função
+      // usa calcBDIMultiplier() sem args — mantém compatibilidade com o comportamento anterior
+      // para incremento/desconto, que são aplicados sobre a M.O. já ajustada).
       const additionalIncrement = itemConfig.additionalIncrement || 0;
       const discount = itemConfig.discount || 0;
       if (additionalIncrement > 0 || discount > 0) {
         const adjustmentMultiplier = 1 + (additionalIncrement - discount) / 100;
         totalLaborItem = totalLaborItem * adjustmentMultiplier;
       }
-      
+
       // Somar ao total geral
       totalMaterialWithBDI += materialWithBDI * qty;
       totalLaborWithBDI += totalLaborItem * qty;
@@ -1970,8 +1982,12 @@ export default function BudgetForm() {
                       const bdiMultiplier = calcBDIMultiplier(additionalIncrement, discount);
 
                       // Aplicar BDI ao material apenas se configurado
-                      // Aplicar materialAdjustment antes do BDI
-                      const matAdjPctReal = itemConfig.materialAdjustment || 0;
+                      // Aplicar materialAdjustment antes do BDI — materialAdjustment vive em
+                      // budget_items (mesma fonte usada pelo servidor em recalculateBudgetTotals/
+                      // getStages). budget_item_bdi_config também tem uma cópia desse campo, mas
+                      // pode ficar dessincronizada; ler de item.materialAdjustment garante paridade
+                      // exata com o total gravado no banco.
+                      const matAdjPctReal = Number(item.materialAdjustment) || 0;
                       const effectiveMaterialAdjReal = effectiveMaterial * (1 + matAdjPctReal / 100);
                       const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterialAdjReal * bdiMultiplier : effectiveMaterialAdjReal;
 
@@ -3141,8 +3157,12 @@ export default function BudgetForm() {
                       const bdiMultiplier = calcBDIMultiplier(additionalIncrement, discount);
 
                       // Aplicar BDI ao material apenas se configurado
-                      // Aplicar materialAdjustment antes do BDI
-                      const matAdjPct = itemConfig.materialAdjustment || 0;
+                      // Aplicar materialAdjustment antes do BDI — materialAdjustment vive em
+                      // budget_items (mesma fonte usada pelo servidor em recalculateBudgetTotals/
+                      // getStages). budget_item_bdi_config também tem uma cópia desse campo, mas
+                      // pode ficar dessincronizada; ler de item.materialAdjustment garante paridade
+                      // exata com o total gravado no banco.
+                      const matAdjPct = Number(item.materialAdjustment) || 0;
                       const effectiveMaterialAdj = effectiveMaterial * (1 + matAdjPct / 100);
                       const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterialAdj * bdiMultiplier : effectiveMaterialAdj;
 
