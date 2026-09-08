@@ -348,17 +348,28 @@ export default function BudgetForm() {
           serviceCost: service.toFixed(2),
           otherCost: other.toFixed(2),
           unitCost: unitCost.toFixed(2),
-          totalCost: (Number(item.quantity) * unitCost).toFixed(2)
+          totalCost: (Number(item.quantity) * unitCost).toFixed(2),
+          // Campos de ajuste manual de BDI (vivem em budget_items) — sem isso,
+          // item.aplicarEncargosSociais/laborAdjustment/materialAdjustment/
+          // includeMaterialOverride chegam undefined em todo cálculo do
+          // front-end (Resumo do Orçamento, Barra de Totais BDI, exports),
+          // fazendo os ajustes manuais do usuário serem silenciosamente
+          // ignorados mesmo com o cálculo "correto" — a causa raiz real da
+          // divergência entre o total gravado no banco e o exibido na tela.
+          aplicarEncargosSociais: item.aplicarEncargosSociais,
+          laborAdjustment: item.laborAdjustment,
+          materialAdjustment: item.materialAdjustment,
+          includeMaterialOverride: item.includeMaterialOverride,
         };
       }
-      
+
       // Para insumos, usar dados do item diretamente
       if (item.type === 'input') {
         const material = Number(item.materialCost || 0);
         const labor = Number(item.laborCost || 0);
         const equipment = Number(item.equipmentCost || 0);
         const unitCost = material + labor + equipment;
-        
+
         return {
           id: item.id,
           stageId: s.id,
@@ -372,7 +383,11 @@ export default function BudgetForm() {
           laborCost: labor.toFixed(2),
           equipmentCost: equipment.toFixed(2),
           unitCost: unitCost.toFixed(2),
-          totalCost: (Number(item.quantity) * unitCost).toFixed(2)
+          totalCost: (Number(item.quantity) * unitCost).toFixed(2),
+          aplicarEncargosSociais: item.aplicarEncargosSociais,
+          laborAdjustment: item.laborAdjustment,
+          materialAdjustment: item.materialAdjustment,
+          includeMaterialOverride: item.includeMaterialOverride,
         };
       }
       
@@ -411,6 +426,10 @@ export default function BudgetForm() {
             unitCost: child.unitCost || "0",
             totalCost: child.totalCost || "0",
             parentItemId: compositeId,
+            aplicarEncargosSociais: child.aplicarEncargosSociais,
+            laborAdjustment: child.laborAdjustment,
+            materialAdjustment: child.materialAdjustment,
+            includeMaterialOverride: child.includeMaterialOverride,
           }))
         };
       }
@@ -443,6 +462,10 @@ export default function BudgetForm() {
         unitCost: (effectiveMat + effectiveLab + effectiveEquip).toFixed(2),
         totalCost: (Number(item.quantity) * (effectiveMat + effectiveLab + effectiveEquip)).toFixed(2),
         parentItemId: item.parentItemId ? Number(item.parentItemId) : null,
+        aplicarEncargosSociais: item.aplicarEncargosSociais,
+        laborAdjustment: item.laborAdjustment,
+        materialAdjustment: item.materialAdjustment,
+        includeMaterialOverride: item.includeMaterialOverride,
       };
     })
   );
@@ -4017,6 +4040,9 @@ export default function BudgetForm() {
                       totalCost: item.totalCost || "0",
                       order: item.order || 0,
                       aplicarEncargosSociais: item.aplicarEncargosSociais,
+                      laborAdjustment: item.laborAdjustment,
+                      materialAdjustment: item.materialAdjustment,
+                      includeMaterialOverride: item.includeMaterialOverride,
                       children: item.type === 'composite'
                         ? (item.children || []).map((child: any) => ({
                             id: child.id,
@@ -4041,6 +4067,10 @@ export default function BudgetForm() {
                             unitCost: child.unitCost || "0",
                             totalCost: child.totalCost || "0",
                             order: child.order || 0,
+                            aplicarEncargosSociais: child.aplicarEncargosSociais,
+                            laborAdjustment: child.laborAdjustment,
+                            materialAdjustment: child.materialAdjustment,
+                            includeMaterialOverride: child.includeMaterialOverride,
                           }))
                         : undefined,
                     }))
