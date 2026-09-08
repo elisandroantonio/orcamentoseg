@@ -2192,10 +2192,14 @@ export const appRouter = router({
           totalLaborHours: totalLaborHours.toFixed(2),
           order: maxOrder + 1,
         });
-        
+
+        // materialCost/laborCost/equipmentCost vieram prontos da composição —
+        // só falta atualizar o total do orçamento com o item novo.
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { id: Number(result.insertId) };
       }),
-    
+
     // Adicionar serviço a preço informado
     addServiceItem: protectedProcedure
       .input(z.object({
@@ -2265,7 +2269,9 @@ export const appRouter = router({
           totalLaborHours: "0",
           order: maxOrder + 1,
         });
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { success: true, itemId: Number(result.insertId), code };
       }),
 
@@ -2341,7 +2347,9 @@ export const appRouter = router({
           totalLaborHours: "0",
           order: maxOrder + 1,
         });
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { success: true, itemId: Number(result.insertId) };
       }),
 
@@ -2381,7 +2389,9 @@ export const appRouter = router({
             totalCost: totalCost.toFixed(2),
           })
           .where(eq(budgetItems.id, input.itemId));
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { success: true };
       }),
 
@@ -2425,7 +2435,9 @@ export const appRouter = router({
             totalCost: totalCost.toFixed(2),
           })
           .where(eq(budgetItems.id, input.itemId));
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { success: true };
       }),
 
@@ -2606,7 +2618,9 @@ export const appRouter = router({
           totalLaborHours: "0",
           order: maxOrder + 1,
         });
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { id: Number(result.insertId) };
       }),
 
@@ -2676,6 +2690,8 @@ export const appRouter = router({
           order: maxOrder + 1,
         });
 
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { id: Number(result.insertId), code };
       }),
 
@@ -2727,7 +2743,9 @@ export const appRouter = router({
         await database
           .delete(budgetItems)
           .where(eq(budgetItems.id, input.itemId));
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { success: true };
       }),
 
@@ -2740,14 +2758,16 @@ export const appRouter = router({
         // Verificar permissão
         const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
         if (!budget) throw new TRPCError({ code: "FORBIDDEN", message: "Budget not found" });
-        
+
         // Deletar item
         const database = await getDb();
         if (!database) throw new Error("Database not available");
         await database
           .delete(budgetItems)
           .where(eq(budgetItems.id, input.itemId));
-        
+
+        await db.recalculateBudgetTotals(input.budgetId, { skipItemCostRecalc: true });
+
         return { success: true };
       }),
     
