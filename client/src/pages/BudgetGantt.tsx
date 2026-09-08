@@ -12,7 +12,7 @@ import { BudgetCurveS } from "@/components/budget/BudgetCurveS";
 import { PlanejadoRealizadoChart } from "@/components/budget/PlanejadoRealizadoChart";
 import { useAvancoFisico } from "@/hooks/useBudgetProgress";
 import { toast as showToast } from "sonner";
-import { Calendar, Save, Trash2, FileDown, Loader2 } from "lucide-react";
+import { Calendar, Save, Trash2, FileDown, Loader2, ChevronRight, ChevronDown } from "lucide-react";
 import ExcelJS from "exceljs";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -168,6 +168,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const [isImportScheduleDialogOpen, setIsImportScheduleDialogOpen] = useState(false);
   const [importSourceBudgetId, setImportSourceBudgetId] = useState<string>("");
   const [isImportingSchedule, setIsImportingSchedule] = useState(false);
+  const [expandedImportClients, setExpandedImportClients] = useState<Set<number | string>>(new Set());
 
   // Curva S — ref pra "fotografar" o gráfico (recharts/SVG) na hora de
   // exportar o PDF, e estado de loading do botão de exportação.
@@ -979,9 +980,28 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
 
   // Lista de orçamentos pra escolher a origem do cronograma a importar
   // (ex: importar do orçamento original pra uma cópia recém-criada pra
-  // faturamento direto, sem precisar remontar o Gantt do zero).
+  // faturamento direto, sem precisar remontar o Gantt do zero). Agrupado
+  // por cliente, igual à tela "Orçamentos" (Budgets.tsx) — mais fácil de
+  // achar o orçamento certo do que uma lista única comprida.
   const { data: allBudgetsList } = trpc.budgets.list.useQuery();
   const otherBudgetsForImport = (allBudgetsList || []).filter((b: any) => b.id !== budgetId);
+  const groupedBudgetsForImport = useMemo(() => {
+    const groups = new Map<number | string, { client: any; budgets: any[] }>();
+    otherBudgetsForImport.forEach((b: any) => {
+      const key = b.clientId ?? "sem-cliente";
+      if (!groups.has(key)) groups.set(key, { client: b.client, budgets: [] });
+      groups.get(key)!.budgets.push(b);
+    });
+    return Array.from(groups.entries()).map(([clientKey, data]) => ({ clientKey, ...data }));
+  }, [otherBudgetsForImport]);
+  const toggleImportClient = (clientKey: number | string) => {
+    setExpandedImportClients((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(clientKey)) newSet.delete(clientKey);
+      else newSet.add(clientKey);
+      return newSet;
+    });
+  };
 
   // Importa datas/duração/predecessoras das etapas casadas por nome (ver
   // mutation no servidor). Sem callbacks aqui — o fluxo completo (que
@@ -1913,18 +1933,47 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
           </DialogHeader>
           <div className="space-y-2 py-2">
             <Label>Orçamento de origem</Label>
-            <Select value={importSourceBudgetId} onValueChange={setImportSourceBudgetId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o orçamento com o cronograma pronto" />
-              </SelectTrigger>
-              <SelectContent>
-                {otherBudgetsForImport.map((b: any) => (
-                  <SelectItem key={b.id} value={String(b.id)}>
-                    {b.title}{b.client?.name ? ` — ${b.client.name}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="border rounded-lg max-h-[320px] overflow-y-auto">
+              {groupedBudgetsForImport.length === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">Nenhum outro orçamento cadastrado.</div>
+              ) : (
+                groupedBudgetsForImport.map(({ clientKey, client, budgets: clientBudgets }) => {
+                  const isExpanded = expandedImportClients.has(clientKey);
+                  return (
+                    <div key={String(clientKey)}>
+                      <button
+                        type="button"
+                        onClick={() => toggleImportClient(clientKey)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium bg-muted/50 hover:bg-muted/70 border-b text-left"
+                      >
+                        {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                        <span className="truncate">
+                          {client ? `${client.name}${client.document ? ` - ${client.document}` : ""}` : "Sem Cliente"}
+                        </span>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          ({clientBudgets.length} {clientBudgets.length === 1 ? "orçamento" : "orçamentos"})
+                        </span>
+                      </button>
+                      {isExpanded && clientBudgets.map((b: any) => (
+                        <button
+                          type="button"
+                          key={b.id}
+                          onClick={() => setImportSourceBudgetId(String(b.id))}
+                          className={`w-full flex flex-col items-start gap-0.5 px-3 py-2 pl-8 text-sm border-b last:border-b-0 text-left hover:bg-accent ${
+                            importSourceBudgetId === String(b.id) ? "bg-primary/10" : ""
+                          }`}
+                        >
+                          <span className="font-medium">{b.title}</span>
+                          {b.project?.name && (
+                            <span className="text-xs text-muted-foreground">{b.project.name}</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsImportScheduleDialogOpen(false)}>
