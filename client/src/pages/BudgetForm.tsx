@@ -71,6 +71,10 @@ interface BudgetItem {
   equipmentCost?: string;
   serviceCost?: string;
   otherCost?: string;
+  aplicarEncargosSociais?: number;
+  includeMaterialOverride?: number;
+  laborAdjustment?: string;
+  materialAdjustment?: string;
 }
 
 export default function BudgetForm() {
@@ -551,13 +555,16 @@ export default function BudgetForm() {
       const other = parseFloat(item.otherCost || "0");
       
       // Aplicar filtro de material (quando desabilitado, material = 0; equipamentos NÃO são afetados)
-      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
-      
+      // IMPORTANTE: aplicarEncargosSociais/includeMaterialOverride vivem em budget_items,
+      // NÃO em budget_item_bdi_config — ler de bdiConfigs aqui sempre dava undefined/false
+      // e zerava os encargos sociais desses itens (bug corrigido).
+      const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
+
       // Buscar configuração de BDI para este item
-      const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, aplicarEncargosSociais: true };
-      
-      // Encargos sociais APENAS em labor (Melhoria 16: considerar flag)
-      const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false; // default true
+      const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
+
+      // Encargos sociais APENAS em labor (Melhoria 16: considerar flag) — direto do item, igual ao servidor
+      const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
       
       // BDI composto TCU/SINAPI
@@ -606,15 +613,17 @@ export default function BudgetForm() {
           const childEquipment = Number(child.equipmentCost) || 0;
           const childService = Number(child.serviceCost) || 0;
           const childOther = Number(child.otherCost) || 0;
-          const childEffectiveMaterial = (includeMaterial || bdiConfigs[child.id!]?.includeMaterialOverride) ? childMaterial : 0;
+          // aplicarEncargosSociais/laborAdjustment/includeMaterialOverride vivem em
+          // budget_items, não em budget_item_bdi_config — ler do child direto, igual ao servidor.
+          const childEffectiveMaterial = (includeMaterial || Number(child.includeMaterialOverride) === 1) ? childMaterial : 0;
 
-          const childConfig = bdiConfigs[child.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true, additionalIncrement: 0, discount: 0, laborAdjustment: 0 };
-          const childAplicarEncargos = childConfig.aplicarEncargosSociais !== false;
+          const childConfig = bdiConfigs[child.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+          const childAplicarEncargos = Number(child.aplicarEncargosSociais) !== 0;
           const childLaborWithCharges = childLabor * (1 + (childAplicarEncargos ? socialCharges : 0) / 100);
           const childTotalLabor = childLaborWithCharges + childEquipment + childService + childOther;
           const childAdditionalBdi = Number(childConfig.additionalIncrement) || 0;
           const childDiscount = Number(childConfig.discount) || 0;
-          const childLaborAdjPct = Number(childConfig.laborAdjustment) || 0;
+          const childLaborAdjPct = Number(child.laborAdjustment) || 0;
           const childBdiMultiplier = calcBDIMultiplier(childAdditionalBdi, childDiscount);
           const childMatAdjPct = Number(childConfig.materialAdjustment) || 0;
           const childEffectiveMaterialAdj = childEffectiveMaterial * (1 + childMatAdjPct / 100);
@@ -660,15 +669,15 @@ export default function BudgetForm() {
       const equipment = Number(item.equipmentCost) || 0;
       const service = Number(item.serviceCost) || 0;
       const other = Number(item.otherCost) || 0;
-      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
+      const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
 
-      const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true, additionalIncrement: 0, discount: 0, laborAdjustment: 0 };
-      const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+      const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+      const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
       const totalLabor = laborWithCharges + equipment + service + other;
       const additionalBdi = Number(itemConfig.additionalIncrement) || 0;
       const discount = Number(itemConfig.discount) || 0;
-      const laborAdjPct = Number(itemConfig.laborAdjustment) || 0;
+      const laborAdjPct = Number(item.laborAdjustment) || 0;
       const bdiMultiplier = calcBDIMultiplier(additionalBdi, discount);
       const matAdjPctExport = Number(itemConfig.materialAdjustment) || 0;
       const effectiveMaterialAdjExport = effectiveMaterial * (1 + matAdjPctExport / 100);
@@ -1392,8 +1401,9 @@ export default function BudgetForm() {
     const other = Number(item.otherCost) || 0;
     
     // Aplicar filtro de material (equipamentos NÃO são afetados pelo includeMaterial)
-    const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
-    
+    // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+    const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
+
     // Equipment, service e other vão para M.O. (SEM encargos, SEM BDI nesta aba)
     const totalLabor = labor + equipment + service + other;
     
@@ -1416,10 +1426,12 @@ export default function BudgetForm() {
     const other = Number(item.otherCost) || 0;
     
     // Aplicar filtro de material (equipamentos NÃO são afetados pelo includeMaterial)
-    const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
-    
+    // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+    const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
+
     // Encargos sociais APENAS em labor, NÃO em equipment/service/other (Melhoria 16: considerar flag)
-    const aplicarEncargos = true; // TODO: buscar do bdiConfigs se necessário
+    // aplicarEncargosSociais vive em budget_items — antes estava fixo em true, ignorando itens isentos.
+    const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
     const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
     
     // BDI composto TCU/SINAPI
@@ -1923,22 +1935,23 @@ export default function BudgetForm() {
                       
                       // Buscar configuração de BDI para este item
                       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
-                      
+
                       // Encargos sociais APENAS em labor (Melhoria 16: considerar flag)
-                      const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                      // aplicarEncargosSociais vive em budget_items, não em budget_item_bdi_config
+                      const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
-                      
+
                       // BDI composto TCU/SINAPI
                       const additionalIncrement = itemConfig.additionalIncrement || 0;
                       const discount = itemConfig.discount || 0;
                       const bdiMultiplier = calcBDIMultiplier(additionalIncrement, discount);
-                      
+
                       // Aplicar BDI ao material apenas se configurado
                       // Aplicar materialAdjustment antes do BDI
                       const matAdjPctReal = itemConfig.materialAdjustment || 0;
                       const effectiveMaterialAdjReal = effectiveMaterial * (1 + matAdjPctReal / 100);
                       const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterialAdjReal * bdiMultiplier : effectiveMaterialAdjReal;
-                      
+
                       // Aplicar BDI à mão de obra apenas se configurado
                       const laborWithBDI = itemConfig.applyBdiToLabor ? laborWithCharges * bdiMultiplier : laborWithCharges;
 
@@ -1947,11 +1960,9 @@ export default function BudgetForm() {
                       const serviceWithBDI = service * bdiMultiplier;
                       const otherWithBDI = other * bdiMultiplier;
 
-                      // Ajuste M.O. (%) por item — estava faltando aqui, por isso este
-                      // card não batia com a tabela detalhada/barra de total (que já
-                      // aplicavam esse ajuste). Mesma lógica usada nos outros pontos do
-                      // arquivo que exportam/calculam o total com BDI.
-                      const laborAdjPct = Number(itemConfig.laborAdjustment) || 0;
+                      // Ajuste M.O. (%) por item — vive em budget_items, não em
+                      // budget_item_bdi_config (lido de lá sempre dava 0 e zerava o ajuste).
+                      const laborAdjPct = Number(item.laborAdjustment) || 0;
 
                       // Total de M.O. = labor com BDI + equipment/service/other com BDI
                       const totalLaborItem = (laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI) * (1 + laborAdjPct / 100);
@@ -2656,7 +2667,8 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
+                              // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+                              const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -2689,7 +2701,8 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
+                              // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+                              const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -2736,7 +2749,8 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
+                              // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+                              const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -2769,7 +2783,8 @@ export default function BudgetForm() {
                               const service = Number(item.serviceCost) || 0;
                               const other = Number(item.otherCost) || 0;
                               // Aplicar filtro de material (equipamentos NÃO são afetados)
-                              const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
+                              // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+                              const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
                               const totalLabor = labor + equipment + service + other;
                               return {
                                 ...item,
@@ -3086,26 +3101,28 @@ export default function BudgetForm() {
                       const other = parseFloat(item.otherCost || "0");
                       
                       // Aplicar filtro de material
-                      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
-                      
+                      // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+                      const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
+
                       // Buscar configuração de BDI para este item
                       const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
-                      
+
                       // Encargos sociais APENAS em labor (Melhoria 16: considerar flag)
-                      const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                      // aplicarEncargosSociais vive em budget_items, não em budget_item_bdi_config
+                      const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
-                      
+
                       // BDI composto TCU/SINAPI
                       const additionalIncrement = itemConfig.additionalIncrement || 0;
                       const discount = itemConfig.discount || 0;
                       const bdiMultiplier = calcBDIMultiplier(additionalIncrement, discount);
-                      
+
                       // Aplicar BDI ao material apenas se configurado
                       // Aplicar materialAdjustment antes do BDI
                       const matAdjPct = itemConfig.materialAdjustment || 0;
                       const effectiveMaterialAdj = effectiveMaterial * (1 + matAdjPct / 100);
                       const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterialAdj * bdiMultiplier : effectiveMaterialAdj;
-                      
+
                       // Aplicar BDI à mão de obra apenas se configurado
                       const laborWithBDI = itemConfig.applyBdiToLabor ? laborWithCharges * bdiMultiplier : laborWithCharges;
 
@@ -3114,11 +3131,9 @@ export default function BudgetForm() {
                       const serviceWithBDI = service * bdiMultiplier;
                       const otherWithBDI = other * bdiMultiplier;
 
-                      // Ajuste M.O. (%) por item — estava faltando aqui, por isso este
-                      // card não batia com a tabela detalhada/barra de total (que já
-                      // aplicavam esse ajuste). Mesma lógica usada nos outros pontos do
-                      // arquivo que exportam/calculam o total com BDI.
-                      const laborAdjPct = Number(itemConfig.laborAdjustment) || 0;
+                      // Ajuste M.O. (%) por item — vive em budget_items, não em
+                      // budget_item_bdi_config (lido de lá sempre dava 0 e zerava o ajuste).
+                      const laborAdjPct = Number(item.laborAdjustment) || 0;
 
                       // Total de M.O. = labor com BDI + equipment/service/other com BDI
                       const totalLaborItem = (laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI) * (1 + laborAdjPct / 100);
@@ -3211,13 +3226,15 @@ export default function BudgetForm() {
                         const other = Number(item.otherCost) || 0;
                         
                         // Aplicar filtro de material
-                        const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
-                        
+                        // includeMaterialOverride vive em budget_items, não em budget_item_bdi_config
+                        const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
+
                         // Buscar configuração de BDI para este item
                         const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
-                        
+
                         // Encargos sociais APENAS em labor, NÃO em equipment/service/other (Melhoria 16: considerar flag)
-                        const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                        // aplicarEncargosSociais vive em budget_items, não em budget_item_bdi_config
+                        const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                         const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
                         
                         // BDI composto TCU/SINAPI
@@ -3354,13 +3371,15 @@ export default function BudgetForm() {
                       const equipment = parseFloat(item.equipmentCost || '0');
                       const service = parseFloat(item.serviceCost || '0');
                       const other = parseFloat(item.otherCost || '0');
-                      const effectiveMaterial = (includeMaterial || bdiConfigs[item.id!]?.includeMaterialOverride) ? material : 0;
-                      const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, aplicarEncargosSociais: true, laborAdjustment: 0 };
-                      const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                      // includeMaterialOverride/aplicarEncargosSociais/laborAdjustment vivem em
+                      // budget_items, não em budget_item_bdi_config.
+                      const effectiveMaterial = (includeMaterial || Number(item.includeMaterialOverride) === 1) ? material : 0;
+                      const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0 };
+                      const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
                       const additionalIncrement = itemConfig.additionalIncrement || 0;
                       const discount = itemConfig.discount || 0;
-                      const laborAdjPct = itemConfig.laborAdjustment || 0;
+                      const laborAdjPct = Number(item.laborAdjustment) || 0;
                       const bdiMultiplier = calcBDIMultiplier(additionalIncrement, discount);
                       const matAdjPctRodape = itemConfig.materialAdjustment || 0;
                       const effectiveMaterialAdjRodape = effectiveMaterial * (1 + matAdjPctRodape / 100);
@@ -3593,8 +3612,9 @@ export default function BudgetForm() {
                         const service = parseFloat(item.serviceCost || "0");
                         const other = parseFloat(item.otherCost || "0");
                         
-                        const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true };
-                        const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                        const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true };
+                        // aplicarEncargosSociais vive em budget_items, não em budget_item_bdi_config
+                        const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                         
                         // Custo base
                         const materialBase = material * qty;
@@ -3675,8 +3695,9 @@ export default function BudgetForm() {
                         const service = parseFloat(item.serviceCost || "0");
                         const other = parseFloat(item.otherCost || "0");
                         
-                        const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true };
-                        const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                        const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true };
+                        // aplicarEncargosSociais vive em budget_items, não em budget_item_bdi_config
+                        const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                         
                         // Calcular custo total com BDI composto TCU/SINAPI
                         const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
@@ -3819,8 +3840,9 @@ export default function BudgetForm() {
                         const service = parseFloat(item.serviceCost || "0");
                         const other = parseFloat(item.otherCost || "0");
                         
-                        const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true, aplicarEncargosSociais: true };
-                        const aplicarEncargos = itemConfig.aplicarEncargosSociais !== false;
+                        const itemConfig = bdiConfigs[item.id!] || { applyBdiToMaterial: true, applyBdiToLabor: true };
+                        // aplicarEncargosSociais vive em budget_items, não em budget_item_bdi_config
+                        const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
                         
                         // Custo base
                         const materialBase = material * qty;
