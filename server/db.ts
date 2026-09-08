@@ -565,7 +565,7 @@ export async function normalizeStageOrder(budgetId: number): Promise<void> {
 
 export async function recalculateBudgetTotals(
   budgetId: number,
-  options?: { skipItemCostRecalc?: boolean }
+  options?: { skipItemCostRecalc?: boolean; dryRun?: boolean }
 ) {
   const db = await getDb();
   if (!db) return;
@@ -649,7 +649,7 @@ export async function recalculateBudgetTotals(
   // em vez de um UPDATE sequencial por etapa. Com N etapas isso trocava N
   // round-trips ao TiDB Cloud por 1 — era o maior gargalo restante na
   // demora ao alterar quantidade de composições/serviços.
-  if (stageTotals.size > 0) {
+  if (stageTotals.size > 0 && !options?.dryRun) {
     const ids = Array.from(stageTotals.keys());
     const caseSql = ids.map(() => `WHEN ? THEN ?`).join(' ');
     const caseParams: any[] = [];
@@ -774,9 +774,15 @@ export async function recalculateBudgetTotals(
 
   const totalCostWithBDI = totalMaterialWithBDI + totalLaborWithBDI;
 
-  await db.update(budgets)
-    .set({ totalCost: totalCostWithBDI.toFixed(2), totalLaborHours: totalLaborHours.toFixed(2) })
-    .where(eq(budgets.id, budgetId));
+  if (!options?.dryRun) {
+    await db.update(budgets)
+      .set({ totalCost: totalCostWithBDI.toFixed(2), totalLaborHours: totalLaborHours.toFixed(2) })
+      .where(eq(budgets.id, budgetId));
+  }
+
+  // Retorna o total calculado — usado pelo modo --dry-run do backfill pra
+  // mostrar o que MUDARIA sem gravar nada.
+  return { totalCost: totalCostWithBDI, totalLaborHours };
 }
 
 // Schedule Activities

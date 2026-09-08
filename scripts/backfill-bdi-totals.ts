@@ -25,12 +25,8 @@ async function main() {
   for (const budget of budgets) {
     const before = String(budget.totalCost ?? '0.00');
 
-    if (!DRY_RUN) {
-      await recalculateBudgetTotals(budget.id);
-    }
-
-    const [after] = await rawQuery('SELECT totalCost FROM budgets WHERE id = ?', [budget.id]);
-    const afterValue = DRY_RUN ? before : String(after.totalCost ?? '0.00');
+    const result = await recalculateBudgetTotals(budget.id, { dryRun: DRY_RUN });
+    const afterValue = result ? result.totalCost.toFixed(2) : before;
 
     const diff = parseFloat(afterValue) - parseFloat(before);
     if (Math.abs(diff) > 0.01) {
