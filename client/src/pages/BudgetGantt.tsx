@@ -18,6 +18,51 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Task } from "gantt-task-react";
 import { drawPdfCorporateHeader, addExcelCorporateHeader } from "@/lib/documentHeader";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+// Linha arrastável da tabela "Etapas Configuradas". Precisa ser um
+// componente à parte (em vez de lógica inline no .map()) porque hooks como
+// useSortable só podem ser chamados no topo de um componente. Usa o
+// padrão "render prop": quem chama decide o que renderizar dentro da
+// <tr>, este componente só injeta a ref/estilo/handlers de arrastar do
+// dnd-kit — trocamos a API nativa de drag-and-drop do navegador (instável:
+// funcionava só às vezes, só andava uma posição por vez) por uma
+// biblioteca de verdade que não depende dela.
+function SortableStageRow({
+  id,
+  children,
+}: {
+  id: number;
+  children: (bindings: {
+    setNodeRef: (el: HTMLTableRowElement | null) => void;
+    style: React.CSSProperties;
+    dragHandleProps: { attributes: ReturnType<typeof useSortable>["attributes"]; listeners: ReturnType<typeof useSortable>["listeners"] };
+    isDragging: boolean;
+  }) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+    position: "relative",
+    zIndex: isDragging ? 1 : undefined,
+  };
+  return <>{children({ setNodeRef, style, dragHandleProps: { attributes, listeners }, isDragging })}</>;
+}
 
 interface BudgetGanttProps {
   // Totais por etapa já calculados com a fórmula de BDI correta (a mesma
@@ -1210,32 +1255,45 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   };
 
   // Arrastar-e-soltar (alça de três riscos) na tabela "Etapas Configuradas"
-  // — substitui as setas de subir/descer e o dropdown "Posição". Usa a
-  // MESMA mutation moveStageToPosition (escopo: só entre irmãs, mesma
-  // etapa-mãe) que o dropdown já usava, então o Gráfico de Gantt e o
-  // Cronograma de Desembolso continuam se atualizando sozinhos — ambos já
-  // são derivados de trpc.budgets.getStages, invalidada no onSuccess dessa
-  // mutation.
-  const [draggedStageId, setDraggedStageId] = useState<number | null>(null);
-  const [dragOverStageId, setDragOverStageId] = useState<number | null>(null);
+  // — substitui as setas de subir/descer e o dropdown "Posição". Usa dnd-kit
+  // (não a API nativa de drag-and-drop do navegador, que se mostrou
+  // inconsistente na prática: funcionava só às vezes e só andava uma
+  // posição de cada vez). Reaproveita a MESMA mutation moveStageToPosition
+  // (escopo: só entre irmãs, mesma etapa-mãe) que o dropdown antigo já
+  // usava, então o Gráfico de Gantt e o Cronograma de Desembolso continuam
+  // se atualizando sozinhos — ambos já são derivados de
+  // trpc.budgets.getStages, invalidada no onSuccess dessa mutation.
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
 
-  const handleDropStage = (targetStage: any, siblingGroup: any[]) => {
-    const sourceId = draggedStageId;
-    setDraggedStageId(null);
-    setDragOverStageId(null);
-    if (sourceId == null || sourceId === targetStage.id) return;
+  // Mesmo filtro que o servidor usa pro escopo de reordenação (só etapas
+  // com data configurada) — usado tanto pra montar a lista arrastável
+  // quanto pra calcular a posição de destino ao soltar.
+  const scheduledStages = useMemo(
+    () => orderedStages.filter((s: any) => s.startDate && s.endDate),
+    [orderedStages]
+  );
 
-    const sourceStage = stages.find((s: any) => s.id === sourceId);
-    if (!sourceStage) return;
+  const handleDragEndSortable = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const sourceStage = stages.find((s: any) => s.id === active.id);
+    const targetStage = stages.find((s: any) => s.id === over.id);
+    if (!sourceStage || !targetStage) return;
 
     if ((sourceStage.parentStageId ?? null) !== (targetStage.parentStageId ?? null)) {
       toast({ title: "Só é possível reordenar dentro do mesmo grupo (mesma etapa-mãe)", variant: "destructive" });
       return;
     }
 
+    const siblingGroup = scheduledStages.filter(
+      (s: any) => (s.parentStageId ?? null) === (sourceStage.parentStageId ?? null)
+    );
     const targetPosition = siblingGroup.findIndex((s: any) => s.id === targetStage.id);
     if (targetPosition === -1) return;
-    handleMoveToPosition(sourceId, targetPosition);
+    handleMoveToPosition(sourceStage.id, targetPosition);
   };
 
   const handleRecalculateAllDistributions = async () => {
@@ -1548,15 +1606,10 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                   <th className="text-right p-3 font-medium">Ações</th>
                 </tr>
               </thead>
-              <tbody>
-                {(() => {
-                  // Usa orderedStages (árvore + data) em vez da lista crua do
-                  // banco, pra garantir que a tabela sempre mostra etapa e
-                  // sub-etapas agrupadas corretamente mesmo antes de clicar
-                  // em "Reorganizar Etapas".
-                  const filteredStages = orderedStages.filter((stage: any) => stage.startDate && stage.endDate);
-
-                  return filteredStages.map((stage: any, index: number) => {
+              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEndSortable}>
+                <SortableContext items={scheduledStages.map((s: any) => s.id)} strategy={verticalListSortingStrategy}>
+                  <tbody>
+                    {scheduledStages.map((stage: any) => {
                     const preds = stage.predecessors ? JSON.parse(stage.predecessors) : [];
                     const predNames = preds
                       .map((p: any) => {
@@ -1566,86 +1619,66 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                       .filter(Boolean)
                       .join(", ");
 
-                    // Arrastar só faz sentido COMPARANDO com as próprias
-                    // irmãs (mesma etapa-mãe) — é exatamente o escopo que
-                    // moveStageToPosition usa no servidor. handleDropStage
-                    // valida isso de novo (defesa dupla) antes de mandar a
-                    // nova posição.
-                    const siblingGroup = filteredStages.filter(
-                      (s: any) => (s.parentStageId ?? null) === (stage.parentStageId ?? null)
-                    );
                     return (
-                      <React.Fragment key={stage.id}>
-                        <tr
-                          className={`border-t hover:bg-muted/50 ${dragOverStageId === stage.id ? "bg-primary/10" : ""}`}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            if (dragOverStageId !== stage.id) setDragOverStageId(stage.id);
-                          }}
-                          onDragLeave={() => setDragOverStageId((prev) => (prev === stage.id ? null : prev))}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            handleDropStage(stage, siblingGroup);
-                          }}
-                        >
-                          <td className="p-3 font-medium">
-                            <span style={{ paddingLeft: (stageDepth.get(stage.id) || 0) * 16 }} className="inline-flex items-center gap-2">
-                              <span
-                                draggable
-                                onDragStart={(e) => {
-                                  setDraggedStageId(stage.id);
-                                  e.dataTransfer.effectAllowed = "move";
-                                }}
-                                onDragEnd={() => {
-                                  setDraggedStageId(null);
-                                  setDragOverStageId(null);
-                                }}
-                                className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground shrink-0"
-                                title="Arraste para reordenar (entre etapas do mesmo nível)"
-                              >
-                                <GripVertical className="w-4 h-4" />
-                              </span>
-                              {(stageDepth.get(stage.id) || 0) > 0 && <span className="text-muted-foreground mr-1">↳</span>}
-                              {stage.name}
-                            </span>
-                          </td>
-                          <td className="p-3 text-sm">
-                            {new Date(stage.startDate).toLocaleDateString("pt-BR")}
-                          </td>
-                          <td className="p-3 text-sm">
-                            {new Date(stage.endDate).toLocaleDateString("pt-BR")}
-                          </td>
-                          <td className="p-3 text-sm">{stage.duration || 0} dias</td>
-                          <td className="p-3 text-sm text-muted-foreground">
-                            {predNames || "Nenhuma"}
-                          </td>
-                          <td className="p-3 text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setExpandedStageId(expandedStageId === stage.id ? null : stage.id)}
-                              >
-                                📊 Distribuir %
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleEditStage(stage.id)}
-                              >
-                                Editar
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => handleDeleteStage(stage.id)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                        {expandedStageId === stage.id && (
+                      <SortableStageRow key={stage.id} id={stage.id}>
+                        {({ setNodeRef, style, dragHandleProps, isDragging }) => (
+                          <React.Fragment>
+                            <tr
+                              ref={setNodeRef}
+                              style={style}
+                              className={`border-t hover:bg-muted/50 ${isDragging ? "bg-primary/10" : ""}`}
+                            >
+                              <td className="p-3 font-medium">
+                                <span style={{ paddingLeft: (stageDepth.get(stage.id) || 0) * 16 }} className="inline-flex items-center gap-2">
+                                  <span
+                                    {...dragHandleProps.attributes}
+                                    {...dragHandleProps.listeners}
+                                    className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground shrink-0 touch-none"
+                                    title="Arraste para reordenar (entre etapas do mesmo nível)"
+                                  >
+                                    <GripVertical className="w-4 h-4" />
+                                  </span>
+                                  {(stageDepth.get(stage.id) || 0) > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                                  {stage.name}
+                                </span>
+                              </td>
+                              <td className="p-3 text-sm">
+                                {new Date(stage.startDate).toLocaleDateString("pt-BR")}
+                              </td>
+                              <td className="p-3 text-sm">
+                                {new Date(stage.endDate).toLocaleDateString("pt-BR")}
+                              </td>
+                              <td className="p-3 text-sm">{stage.duration || 0} dias</td>
+                              <td className="p-3 text-sm text-muted-foreground">
+                                {predNames || "Nenhuma"}
+                              </td>
+                              <td className="p-3 text-right">
+                                <div className="flex justify-end gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setExpandedStageId(expandedStageId === stage.id ? null : stage.id)}
+                                  >
+                                    📊 Distribuir %
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleEditStage(stage.id)}
+                                  >
+                                    Editar
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={() => handleDeleteStage(stage.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                            {expandedStageId === stage.id && (
                           <tr className="border-t bg-blue-50">
                             <td colSpan={6} className="p-4">
                               <div className="space-y-3">
@@ -1700,12 +1733,15 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                               </div>
                             </td>
                           </tr>
+                            )}
+                          </React.Fragment>
                         )}
-                      </React.Fragment>
+                      </SortableStageRow>
                     );
-                  });
-                })()}
-              </tbody>
+                  })}
+                  </tbody>
+                </SortableContext>
+              </DndContext>
             </table>
           </div>
         </CardContent>
