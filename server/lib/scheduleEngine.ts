@@ -4,16 +4,28 @@
 // de cronograma" no histórico do projeto.
 //
 // O que faz:
-//   1. Classifica cada etapa raiz do orçamento numa fase típica de obra,
-//      por palavra-chave no nome (fundação, estrutura, alvenaria, etc.).
+//   1. Classifica cada etapa numa fase típica de obra, por palavra-chave
+//      no nome (fundação, estrutura, alvenaria, etc.) — usado SÓ pra
+//      estimar duração (ver item 2) e pra mostrar a "Fase detectada" na
+//      prévia. NÃO é usado pra decidir a ordem/predecessoras (ver item 3).
 //   2. Estima a duração de cada etapa: primeiro tenta o histórico de
 //      orçamentos já cadastrados pela própria empresa (dias/unidade médio
 //      observado em etapas do mesmo serviceUnit); se não houver amostra
 //      suficiente, cai numa tabela fixa de duração padrão por fase.
-//   3. Monta as dependências (predecessoras) automaticamente: cada fase
-//      depende da fase anterior mais próxima que tenha etapa presente no
-//      orçamento; dentro da mesma fase, as etapas ficam encadeadas na
-//      ordem em que já aparecem na planilha.
+//   3. Monta as dependências (predecessoras) automaticamente: cada etapa
+//      depende diretamente da etapa ANTERIOR na mesma ordem em que já
+//      aparecem no orçamento (campo `order` — a ordem em que o usuário
+//      cadastrou as etapas na planilha). Essa é a decisão de design mais
+//      importante do motor: classificar por palavra-chave pra decidir
+//      PRECEDÊNCIA se mostrou pouco confiável na prática (ex: "Metais"
+//      virando dependente de "Muro de Contenção" em vez de "Instalações
+//      Hidrossanitárias", porque "muro" batia com a palavra-chave da fase
+//      "Paisagismo" e "Metais" sozinho não batia com nenhuma fase). Como o
+//      usuário já cadastra as etapas normalmente na ordem de execução da
+//      obra (com raríssimas exceções, tipo Pavimentação Externa ficar pro
+//      fim — ajuste manual esperado depois), usar essa ordem como
+//      predecessora direta é muito mais confiável do que tentar adivinhar
+//      por palavra-chave.
 //   4. Calcula startDate/endDate por "forward pass" a partir de uma data
 //      de início informada pelo usuário — isso não existe hoje no sistema
 //      (hoje a duração é sempre derivada de datas digitadas manualmente,
@@ -106,10 +118,6 @@ export function classifyStagePhase(stageName: string): PhaseId {
     }
   }
   return "outros";
-}
-
-function phaseIndex(phaseId: PhaseId): number {
-  return PHASES.findIndex((p) => p.id === phaseId);
 }
 
 function phaseFallbackDays(phaseId: PhaseId): number {
@@ -223,62 +231,38 @@ function addDays(dateStr: string, days: number): string {
 }
 
 /**
- * Roda o encadeamento por fase + forward-pass de datas pra um grupo
- * FECHADO de etapas-folha (ou seja: as predecessoras só são buscadas
- * dentro do próprio grupo). Usada tanto pro encadeamento global das
- * etapas-raiz soltas quanto pro encadeamento local de cada "frente de
+ * Roda o encadeamento sequencial (cada etapa depende da anterior, na
+ * mesma ordem em que já aparecem no orçamento) + forward-pass de datas
+ * pra um grupo FECHADO de etapas-folha (ou seja: as predecessoras só são
+ * buscadas dentro do próprio grupo). Usada tanto pro encadeamento global
+ * das etapas-raiz soltas quanto pro encadeamento local de cada "frente de
  * obra" (etapa-raiz com sub-etapas) — ver generateScheduleDraft.
+ *
+ * A classificação por fase (classifyStagePhase) entra aqui só pra estimar
+ * duração (histórico da empresa ou padrão de mercado) e pra rotular a
+ * "Fase detectada" mostrada na prévia — NÃO decide mais a ordem/
+ * predecessoras. Tentar decidir precedência por palavra-chave se mostrou
+ * pouco confiável na prática (uma etapa mal classificada, ou cujo nome
+ * batia por acaso com a keyword errada, virava dependente da fase errada
+ * inteira). A ordem de cadastro (`order`) já reflete a sequência de
+ * execução real que o usuário pretende quase sempre.
  */
 function scheduleLeafGroup(
   leaves: LeafEntry[],
   projectStartDate: string,
   historicalRates: Map<string, number>
 ): StageDraft[] {
-  // Classifica e agrupa por fase, preservando a ordem original dentro de
-  // cada fase.
-  const withPhase = leaves.map((entry) => ({ entry, phase: classifyStagePhase(entry.stage.name) }));
-
-  // Para cada fase presente no grupo, guarda a lista de stageIds naquela
-  // fase, na ordem em que aparecem.
-  const stagesByPhase = new Map<PhaseId, number[]>();
-  for (const { entry, phase } of withPhase) {
-    if (!stagesByPhase.has(phase)) stagesByPhase.set(phase, []);
-    stagesByPhase.get(phase)!.push(entry.stage.id);
-  }
-
-  // Acha, pra cada fase presente, a fase anterior (na ordem canônica) que
-  // também está presente no grupo — é dela que vem a predecessora.
-  function previousPresentPhase(phase: PhaseId): PhaseId | null {
-    const idx = phaseIndex(phase);
-    for (let i = idx - 1; i >= 0; i--) {
-      const candidate = PHASES[i].id;
-      if (stagesByPhase.has(candidate) && stagesByPhase.get(candidate)!.length > 0) {
-        return candidate;
-      }
-    }
-    return null;
-  }
-
   const drafts = new Map<number, Omit<StageDraft, "startDate" | "endDate">>();
 
-  for (const { entry, phase } of withPhase) {
+  leaves.forEach((entry, index) => {
+    const phase = classifyStagePhase(entry.stage.name);
     const { days, source } = estimateDuration(entry.stage, phase, historicalRates);
-    const idsInPhase = stagesByPhase.get(phase)!;
-    const posInPhase = idsInPhase.indexOf(entry.stage.id);
 
-    const predecessorIds: number[] = [];
-    if (posInPhase > 0) {
-      // Encadeada com a etapa anterior da MESMA fase.
-      predecessorIds.push(idsInPhase[posInPhase - 1]);
-    } else {
-      // Primeira etapa da fase: depende de TODAS as etapas da fase
-      // anterior presente (garante que a fase só começa quando a
-      // anterior estiver de fato concluída).
-      const prevPhase = previousPresentPhase(phase);
-      if (prevPhase) {
-        predecessorIds.push(...stagesByPhase.get(prevPhase)!);
-      }
-    }
+    // Cada etapa depende diretamente da etapa imediatamente anterior
+    // nesta lista (já vem ordenada por `order` — ver generateScheduleDraft
+    // e collectLeaves). A primeira etapa do grupo não tem predecessora:
+    // começa na data de início do projeto/frente de obra.
+    const predecessorIds: number[] = index > 0 ? [leaves[index - 1].stage.id] : [];
 
     drafts.set(entry.stage.id, {
       id: entry.stage.id,
@@ -290,15 +274,14 @@ function scheduleLeafGroup(
       durationSource: source,
       predecessorIds,
     });
-  }
+  });
 
-  // Forward pass: como as fases seguem a ordem canônica e nunca há ciclo
-  // dentro do grupo, basta processar na ordem em que os stages foram
-  // percorridos acima.
+  // Forward pass: como a cadeia segue estritamente a ordem da lista (sem
+  // ciclos possíveis), basta processar os stages nessa mesma ordem.
   const computedEnd = new Map<number, string>();
   const result: StageDraft[] = [];
 
-  for (const { entry } of withPhase) {
+  for (const entry of leaves) {
     const draft = drafts.get(entry.stage.id)!;
     let start = projectStartDate;
     for (const predId of draft.predecessorIds) {
