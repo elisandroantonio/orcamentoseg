@@ -1102,6 +1102,112 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     }
   };
 
+  // Geração automática de cronograma (motor baseado em regras, sem custo
+  // de IA externa — ver server/lib/scheduleEngine.ts). Fluxo: usuário
+  // informa a data de início desejada -> pede um RASCUNHO ao servidor
+  // (nada gravado ainda) -> revisa/ajusta duração na prévia -> confirma
+  // pra gravar de fato via applyScheduleDraft. Nunca aplica sozinho.
+  const applyScheduleDraftMutation = trpc.budgets.applyScheduleDraft.useMutation();
+  const [isGenerateScheduleDialogOpen, setIsGenerateScheduleDialogOpen] = useState(false);
+  const [generateStartDate, setGenerateStartDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [isApplyingDraft, setIsApplyingDraft] = useState(false);
+  const [scheduleDraftRows, setScheduleDraftRows] = useState<Array<{
+    id: number;
+    name: string;
+    phaseLabel: string;
+    durationDays: number;
+    durationSource: "historico" | "mercado";
+    predecessorIds: number[];
+    startDate: string;
+    endDate: string;
+  }> | null>(null);
+
+  const addDaysLocal = (dateStr: string, days: number): string => {
+    const d = new Date(dateStr + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  // Refaz o forward-pass localmente (sem ida ao servidor) quando o usuário
+  // ajusta a duração de uma etapa na prévia — respeita as mesmas
+  // predecessoras calculadas pelo motor, só recalculando as datas.
+  const recomputeDraftDates = (
+    rows: NonNullable<typeof scheduleDraftRows>,
+    startDate: string
+  ): NonNullable<typeof scheduleDraftRows> => {
+    const computedEnd = new Map<number, string>();
+    const result: NonNullable<typeof scheduleDraftRows> = [];
+    for (const row of rows) {
+      let start = startDate;
+      for (const predId of row.predecessorIds) {
+        const predEnd = computedEnd.get(predId);
+        if (predEnd && predEnd > start) start = predEnd;
+      }
+      const end = addDaysLocal(start, row.durationDays);
+      computedEnd.set(row.id, end);
+      result.push({ ...row, startDate: start, endDate: end });
+    }
+    return result;
+  };
+
+  const handleGenerateScheduleDraft = async () => {
+    setIsGeneratingDraft(true);
+    try {
+      const result = await utils.budgets.generateScheduleDraft.fetch({
+        budgetId,
+        projectStartDate: generateStartDate,
+      });
+      setScheduleDraftRows(result.draft);
+    } catch (error: any) {
+      console.error('Erro ao gerar rascunho de cronograma:', error);
+      showToast.error(error?.message || "Erro ao gerar rascunho de cronograma");
+    } finally {
+      setIsGeneratingDraft(false);
+    }
+  };
+
+  const handleDraftDurationChange = (stageId: number, newDuration: number) => {
+    setScheduleDraftRows((prev) => {
+      if (!prev) return prev;
+      const updated = prev.map((row) =>
+        row.id === stageId ? { ...row, durationDays: Math.max(1, newDuration) } : row
+      );
+      return recomputeDraftDates(updated, generateStartDate);
+    });
+  };
+
+  const handleApplyScheduleDraft = async () => {
+    if (!scheduleDraftRows) return;
+    setIsApplyingDraft(true);
+    try {
+      const result = await applyScheduleDraftMutation.mutateAsync({
+        budgetId,
+        stages: scheduleDraftRows.map((row) => ({
+          id: row.id,
+          startDate: row.startDate,
+          endDate: row.endDate,
+          duration: row.durationDays,
+          predecessorIds: row.predecessorIds,
+        })),
+      });
+      utils.budgets.getStages.invalidate({ budgetId });
+      setIsGenerateScheduleDialogOpen(false);
+      setScheduleDraftRows(null);
+      showToast.success(`Cronograma gerado e aplicado em ${result.updated} etapa(s)!`);
+    } catch (error: any) {
+      console.error('Erro ao aplicar cronograma gerado:', error);
+      showToast.error(error?.message || "Erro ao aplicar cronograma gerado");
+    } finally {
+      setIsApplyingDraft(false);
+    }
+  };
+
+  const handleCloseGenerateScheduleDialog = () => {
+    setIsGenerateScheduleDialogOpen(false);
+    setScheduleDraftRows(null);
+  };
+
   const handleMoveToPosition = async (stageId: number, targetPosition: number) => {
     try {
       await moveToPositionMutation.mutateAsync({
@@ -1414,6 +1520,15 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                 title="Copia datas, duração, predecessoras e % de desembolso de outro orçamento com etapas equivalentes (ex: uma cópia deste orçamento)"
               >
                 Importar Cronograma de Outro Orçamento
+              </Button>
+              <Button
+                onClick={() => setIsGenerateScheduleDialogOpen(true)}
+                variant="default"
+                size="sm"
+                disabled={stages.length === 0}
+                title="Gera automaticamente datas, duração e predecessoras das etapas-raiz a partir de uma data de início (rascunho revisável, nada é gravado sem confirmação)"
+              >
+                Gerar Cronograma Automático
               </Button>
             </div>
           </div>
@@ -1985,6 +2100,107 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
             >
               {isImportingSchedule ? "Importando..." : "Importar Cronograma"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isGenerateScheduleDialogOpen} onOpenChange={(open) => !open && handleCloseGenerateScheduleDialog()}>
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Gerar Cronograma Automático</DialogTitle>
+            <DialogDescription>
+              Classifica as etapas-raiz da planilha por fase típica de obra (fundação, estrutura,
+              alvenaria etc.), estima a duração de cada uma (histórico da própria empresa quando
+              houver amostra suficiente, senão um padrão de mercado por fase) e monta datas e
+              predecessoras automaticamente a partir da data de início informada. Isso é sempre um
+              RASCUNHO: você pode ajustar a duração de qualquer etapa antes de confirmar — nada é
+              gravado até você clicar em "Aplicar Cronograma". Etapas que já tinham datas serão
+              substituídas pelas novas ao confirmar. Sub-etapas não são afetadas.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!scheduleDraftRows ? (
+            <div className="space-y-3 py-2">
+              <Label>Data de início da obra</Label>
+              <Input
+                type="date"
+                value={generateStartDate}
+                onChange={(e) => setGenerateStartDate(e.target.value)}
+                className="max-w-[200px]"
+              />
+            </div>
+          ) : (
+            <div className="border rounded-lg max-h-[440px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted sticky top-0">
+                  <tr>
+                    <th className="text-left p-2 font-medium">Etapa</th>
+                    <th className="text-left p-2 font-medium">Fase detectada</th>
+                    <th className="text-left p-2 font-medium">Duração (dias)</th>
+                    <th className="text-left p-2 font-medium">Fonte</th>
+                    <th className="text-left p-2 font-medium">Início</th>
+                    <th className="text-left p-2 font-medium">Término</th>
+                    <th className="text-left p-2 font-medium">Predecessoras</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scheduleDraftRows.map((row) => (
+                    <tr key={row.id} className="border-t">
+                      <td className="p-2 font-medium">{row.name}</td>
+                      <td className="p-2 text-muted-foreground">{row.phaseLabel}</td>
+                      <td className="p-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={row.durationDays}
+                          onChange={(e) => handleDraftDurationChange(row.id, parseInt(e.target.value, 10) || 1)}
+                          className="w-20 h-8"
+                        />
+                      </td>
+                      <td className="p-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          row.durationSource === "historico" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"
+                        }`}>
+                          {row.durationSource === "historico" ? "Histórico" : "Mercado"}
+                        </span>
+                      </td>
+                      <td className="p-2 whitespace-nowrap">{new Date(row.startDate + "T00:00:00").toLocaleDateString('pt-BR')}</td>
+                      <td className="p-2 whitespace-nowrap">{new Date(row.endDate + "T00:00:00").toLocaleDateString('pt-BR')}</td>
+                      <td className="p-2 text-muted-foreground text-xs">
+                        {row.predecessorIds.length === 0
+                          ? "—"
+                          : row.predecessorIds
+                              .map((predId) => scheduleDraftRows.find((r) => r.id === predId)?.name)
+                              .filter(Boolean)
+                              .join(", ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <DialogFooter>
+            {scheduleDraftRows ? (
+              <>
+                <Button variant="outline" onClick={() => setScheduleDraftRows(null)} disabled={isApplyingDraft}>
+                  Voltar
+                </Button>
+                <Button onClick={handleApplyScheduleDraft} disabled={isApplyingDraft}>
+                  {isApplyingDraft ? "Aplicando..." : "Aplicar Cronograma"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={handleCloseGenerateScheduleDialog}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleGenerateScheduleDraft} disabled={isGeneratingDraft}>
+                  {isGeneratingDraft ? "Gerando..." : "Gerar Rascunho"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

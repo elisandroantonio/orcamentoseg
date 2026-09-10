@@ -10,7 +10,8 @@ import { additivesRouter } from "./routers/additives";
 import { materialListsRouter } from "./routers/materialLists";
 import { cubScRouter } from "./routers/cubSc";
 import { materialMergeRulesRouter } from "./routers/materialMergeRules";
-import { 
+import { buildHistoricalRates, generateScheduleDraft, type StageInput } from "./lib/scheduleEngine";
+import {
   inputs, compositions, compositionInputs, projects, budgets, budgetItems, budgetItemInputs,
   budgetStages, scheduleActivities, schedulePeriods, disbursements, categories, clients, companySettings,
   budgetItemBdiConfig, budgetSchedulePeriods, budgetScheduleItems, budgetMonthlyDistribution,
@@ -1182,6 +1183,129 @@ export const appRouter = router({
           unmatchedNames,
           stageIdMap,
         };
+      }),
+
+    // Gera um RASCUNHO de cronograma (nada é gravado no banco aqui) usando
+    // o motor baseado em regras de server/lib/scheduleEngine.ts: classifica
+    // as etapas-raiz do orçamento em fases típicas de obra, estima duração
+    // (histórico da própria empresa quando houver amostra suficiente,
+    // senão um padrão de mercado por fase) e monta datas/predecessoras
+    // automaticamente a partir da data de início informada. O cliente
+    // mostra isso como preview editável e só grava de fato ao chamar
+    // applyScheduleDraft.
+    generateScheduleDraft: protectedProcedure
+      .input(z.object({
+        budgetId: z.number(),
+        projectStartDate: z.string(), // YYYY-MM-DD
+      }))
+      .query(async ({ ctx, input }) => {
+        const database = await getDb();
+        if (!database) throw new Error("Database not available");
+
+        const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
+        if (!budget) throw new Error("Orçamento não encontrado");
+
+        // Etapas-raiz do orçamento alvo (sub-etapas não entram na v1 do
+        // gerador — ver comentário em scheduleEngine.ts).
+        const rawStages = await database
+          .select({
+            id: budgetStages.id,
+            name: budgetStages.name,
+            order: budgetStages.order,
+            serviceUnit: budgetStages.serviceUnit,
+            serviceQuantity: budgetStages.serviceQuantity,
+          })
+          .from(budgetStages)
+          .where(and(eq(budgetStages.budgetId, input.budgetId), isNull(budgetStages.parentStageId)))
+          .orderBy(budgetStages.order);
+
+        if (rawStages.length === 0) {
+          throw new Error("Este orçamento ainda não tem etapas cadastradas na planilha. Monte a planilha antes de gerar o cronograma.");
+        }
+
+        const stages: StageInput[] = rawStages.map((s) => ({
+          id: s.id,
+          name: s.name,
+          order: s.order,
+          serviceUnit: s.serviceUnit,
+          serviceQuantity: s.serviceQuantity,
+        }));
+
+        // Amostras históricas: TODAS as etapas já cadastradas pelo usuário
+        // (qualquer orçamento, qualquer status) que tenham serviceUnit +
+        // serviceQuantity + duration preenchidos — é daí que vem a taxa
+        // dias/unidade usada como 1ª opção de estimativa (mercado é só
+        // fallback).
+        const historicalRows = await database
+          .select({
+            stageName: budgetStages.name,
+            serviceUnit: budgetStages.serviceUnit,
+            serviceQuantity: budgetStages.serviceQuantity,
+            duration: budgetStages.duration,
+          })
+          .from(budgetStages)
+          .innerJoin(budgets, eq(budgetStages.budgetId, budgets.id))
+          .where(eq(budgets.userId, ctx.user.id));
+
+        const historicalRates = buildHistoricalRates(historicalRows);
+
+        const draft = generateScheduleDraft(stages, input.projectStartDate, historicalRates);
+
+        return { draft };
+      }),
+
+    // Grava de fato o cronograma revisado pelo usuário (a partir do
+    // rascunho de generateScheduleDraft, possivelmente editado à mão antes
+    // de confirmar). Nunca é chamado automaticamente — só mediante
+    // confirmação explícita na UI.
+    applyScheduleDraft: protectedProcedure
+      .input(z.object({
+        budgetId: z.number(),
+        stages: z.array(z.object({
+          id: z.number(),
+          startDate: z.string(), // YYYY-MM-DD
+          endDate: z.string(), // YYYY-MM-DD
+          duration: z.number(),
+          predecessorIds: z.array(z.number()).default([]),
+        })),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const database = await getDb();
+        if (!database) throw new Error("Database not available");
+
+        const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
+        if (!budget) throw new Error("Orçamento não encontrado");
+
+        // Confirma que todos os IDs recebidos realmente pertencem a este
+        // orçamento — evita que um id forjado no payload grave data em
+        // etapa de outro orçamento/usuário.
+        const ownedStages = await database
+          .select({ id: budgetStages.id })
+          .from(budgetStages)
+          .where(eq(budgetStages.budgetId, input.budgetId));
+        const validIds = new Set(ownedStages.map((s) => s.id));
+
+        let updated = 0;
+        for (const stage of input.stages) {
+          if (!validIds.has(stage.id)) continue;
+
+          const predecessors = stage.predecessorIds
+            .filter((predId) => validIds.has(predId))
+            .map((predId) => ({ id: predId, type: "FS" as const, lag: 0 }));
+
+          await database
+            .update(budgetStages)
+            .set({
+              startDate: new Date(stage.startDate),
+              endDate: new Date(stage.endDate),
+              duration: stage.duration,
+              predecessors: predecessors.length > 0 ? JSON.stringify(predecessors) : null,
+            })
+            .where(eq(budgetStages.id, stage.id));
+          updated++;
+        }
+
+        return { updated };
       }),
 
     moveToClient: protectedProcedure
