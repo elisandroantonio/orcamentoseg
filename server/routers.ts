@@ -1187,12 +1187,12 @@ export const appRouter = router({
 
     // Gera um RASCUNHO de cronograma (nada é gravado no banco aqui) usando
     // o motor baseado em regras de server/lib/scheduleEngine.ts: classifica
-    // as etapas-raiz do orçamento em fases típicas de obra, estima duração
-    // (histórico da própria empresa quando houver amostra suficiente,
-    // senão um padrão de mercado por fase) e monta datas/predecessoras
-    // automaticamente a partir da data de início informada. O cliente
-    // mostra isso como preview editável e só grava de fato ao chamar
-    // applyScheduleDraft.
+    // as etapas (e sub-etapas) do orçamento em fases típicas de obra,
+    // estima duração (histórico da própria empresa quando houver amostra
+    // suficiente, senão um padrão de mercado por fase) e monta
+    // datas/predecessoras automaticamente a partir da data de início
+    // informada. O cliente mostra isso como preview editável e só grava de
+    // fato ao chamar applyScheduleDraft.
     generateScheduleDraft: protectedProcedure
       .input(z.object({
         budgetId: z.number(),
@@ -1205,18 +1205,20 @@ export const appRouter = router({
         const budget = await db.getBudgetById(input.budgetId, ctx.user.id);
         if (!budget) throw new Error("Orçamento não encontrado");
 
-        // Etapas-raiz do orçamento alvo (sub-etapas não entram na v1 do
-        // gerador — ver comentário em scheduleEngine.ts).
+        // TODAS as etapas do orçamento (raiz + sub-etapas, em qualquer
+        // profundidade) — o motor decide sozinho quem vira linha do
+        // cronograma (só as folhas) e como agrupar (ver scheduleEngine.ts).
         const rawStages = await database
           .select({
             id: budgetStages.id,
             name: budgetStages.name,
             order: budgetStages.order,
+            parentStageId: budgetStages.parentStageId,
             serviceUnit: budgetStages.serviceUnit,
             serviceQuantity: budgetStages.serviceQuantity,
           })
           .from(budgetStages)
-          .where(and(eq(budgetStages.budgetId, input.budgetId), isNull(budgetStages.parentStageId)))
+          .where(eq(budgetStages.budgetId, input.budgetId))
           .orderBy(budgetStages.order);
 
         if (rawStages.length === 0) {
@@ -1227,6 +1229,7 @@ export const appRouter = router({
           id: s.id,
           name: s.name,
           order: s.order,
+          parentStageId: s.parentStageId,
           serviceUnit: s.serviceUnit,
           serviceQuantity: s.serviceQuantity,
         }));

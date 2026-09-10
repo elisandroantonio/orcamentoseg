@@ -12,7 +12,7 @@ import { BudgetCurveS } from "@/components/budget/BudgetCurveS";
 import { PlanejadoRealizadoChart } from "@/components/budget/PlanejadoRealizadoChart";
 import { useAvancoFisico } from "@/hooks/useBudgetProgress";
 import { toast as showToast } from "sonner";
-import { Calendar, Save, Trash2, FileDown, Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import { Calendar, Save, Trash2, FileDown, Loader2, ChevronRight, ChevronDown, GripVertical } from "lucide-react";
 import ExcelJS from "exceljs";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -929,18 +929,6 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     window.scrollTo({ top: 0, behavior: 'smooth' });
    };
   
-  const reorderStageMutation = trpc.budgets.reorderStage.useMutation({
-    onSuccess: async (data) => {
-      toast({ title: "Etapa reordenada com sucesso!" });
-      // Invalidar e refetch imediatamente
-      await utils.budgets.getStages.invalidate({ budgetId });
-      await refetchStages();
-    },
-    onError: (error) => {
-      toast({ title: `Erro: ${error.message}`, variant: "destructive" });
-    },
-  });
-
   const moveToPositionMutation = trpc.budgets.moveStageToPosition.useMutation({
     onSuccess: async (data) => {
       toast({ title: "Etapa movida com sucesso!" });
@@ -1115,6 +1103,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   const [scheduleDraftRows, setScheduleDraftRows] = useState<Array<{
     id: number;
     name: string;
+    depth: number;
     phaseLabel: string;
     durationDays: number;
     durationSource: "historico" | "mercado";
@@ -1220,6 +1209,35 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     }
   };
 
+  // Arrastar-e-soltar (alça de três riscos) na tabela "Etapas Configuradas"
+  // — substitui as setas de subir/descer e o dropdown "Posição". Usa a
+  // MESMA mutation moveStageToPosition (escopo: só entre irmãs, mesma
+  // etapa-mãe) que o dropdown já usava, então o Gráfico de Gantt e o
+  // Cronograma de Desembolso continuam se atualizando sozinhos — ambos já
+  // são derivados de trpc.budgets.getStages, invalidada no onSuccess dessa
+  // mutation.
+  const [draggedStageId, setDraggedStageId] = useState<number | null>(null);
+  const [dragOverStageId, setDragOverStageId] = useState<number | null>(null);
+
+  const handleDropStage = (targetStage: any, siblingGroup: any[]) => {
+    const sourceId = draggedStageId;
+    setDraggedStageId(null);
+    setDragOverStageId(null);
+    if (sourceId == null || sourceId === targetStage.id) return;
+
+    const sourceStage = stages.find((s: any) => s.id === sourceId);
+    if (!sourceStage) return;
+
+    if ((sourceStage.parentStageId ?? null) !== (targetStage.parentStageId ?? null)) {
+      toast({ title: "Só é possível reordenar dentro do mesmo grupo (mesma etapa-mãe)", variant: "destructive" });
+      return;
+    }
+
+    const targetPosition = siblingGroup.findIndex((s: any) => s.id === targetStage.id);
+    if (targetPosition === -1) return;
+    handleMoveToPosition(sourceId, targetPosition);
+  };
+
   const handleRecalculateAllDistributions = async () => {
     try {
       await recalculateAllMutation.mutateAsync({ budgetId });
@@ -1233,22 +1251,6 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
       await reloadStagesMutation.mutateAsync({ budgetId });
     } catch (error) {
       console.error('Erro ao rearranjar etapas:', error);
-    }
-  };
-
-  const handleReorderStage = async (stageId: number, direction: 'up' | 'down') => {
-    try {
-      await reorderStageMutation.mutateAsync({
-        budgetId,
-        stageId,
-        direction,
-      });
-      
-      toast({ title: "Etapa reordenada com sucesso!" });
-      await utils.budgets.getStages.invalidate({ budgetId });
-      await refetchStages();
-    } catch (error: any) {
-      toast({ title: `Erro: ${error.message}`, variant: "destructive" });
     }
   };
 
@@ -1564,23 +1566,45 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                       .filter(Boolean)
                       .join(", ");
 
-                    // "Mover pra cima/baixo" e "Posição" só fazem sentido
-                    // COMPARANDO com as próprias irmãs (mesma etapa-mãe) —
-                    // é exatamente o que o servidor considera. Usar o índice
-                    // da lista inteira (misturando etapas de pais
-                    // diferentes) fazia os botões ficarem habilitados sem
-                    // fazer nada visível, ou o dropdown "Posição" enfiar uma
-                    // etapa no meio das sub-etapas de outra.
+                    // Arrastar só faz sentido COMPARANDO com as próprias
+                    // irmãs (mesma etapa-mãe) — é exatamente o escopo que
+                    // moveStageToPosition usa no servidor. handleDropStage
+                    // valida isso de novo (defesa dupla) antes de mandar a
+                    // nova posição.
                     const siblingGroup = filteredStages.filter(
                       (s: any) => (s.parentStageId ?? null) === (stage.parentStageId ?? null)
                     );
-                    const siblingIndex = siblingGroup.findIndex((s: any) => s.id === stage.id);
-
                     return (
                       <React.Fragment key={stage.id}>
-                        <tr className="border-t hover:bg-muted/50">
+                        <tr
+                          className={`border-t hover:bg-muted/50 ${dragOverStageId === stage.id ? "bg-primary/10" : ""}`}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            if (dragOverStageId !== stage.id) setDragOverStageId(stage.id);
+                          }}
+                          onDragLeave={() => setDragOverStageId((prev) => (prev === stage.id ? null : prev))}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            handleDropStage(stage, siblingGroup);
+                          }}
+                        >
                           <td className="p-3 font-medium">
-                            <span style={{ paddingLeft: (stageDepth.get(stage.id) || 0) * 16 }} className="inline-flex items-center">
+                            <span style={{ paddingLeft: (stageDepth.get(stage.id) || 0) * 16 }} className="inline-flex items-center gap-2">
+                              <span
+                                draggable
+                                onDragStart={(e) => {
+                                  setDraggedStageId(stage.id);
+                                  e.dataTransfer.effectAllowed = "move";
+                                }}
+                                onDragEnd={() => {
+                                  setDraggedStageId(null);
+                                  setDragOverStageId(null);
+                                }}
+                                className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground shrink-0"
+                                title="Arraste para reordenar (entre etapas do mesmo nível)"
+                              >
+                                <GripVertical className="w-4 h-4" />
+                              </span>
                               {(stageDepth.get(stage.id) || 0) > 0 && <span className="text-muted-foreground mr-1">↳</span>}
                               {stage.name}
                             </span>
@@ -1597,43 +1621,6 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleReorderStage(stage.id, 'up')}
-                                disabled={siblingIndex <= 0}
-                                title="Mover para cima (entre as etapas do mesmo nível)"
-                              >
-                                ↑
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleReorderStage(stage.id, 'down')}
-                                disabled={siblingIndex === -1 || siblingIndex === siblingGroup.length - 1}
-                                title="Mover para baixo (entre as etapas do mesmo nível)"
-                              >
-                                ↓
-                              </Button>
-                              <Select
-                                value={siblingIndex >= 0 ? siblingIndex.toString() : undefined}
-                                onValueChange={(value) => {
-                                  const parsed = parseInt(value, 10);
-                                  if (Number.isNaN(parsed)) return;
-                                  handleMoveToPosition(stage.id, parsed);
-                                }}
-                              >
-                                <SelectTrigger className="w-[140px] h-8">
-                                  <SelectValue placeholder="Mover para..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {siblingGroup.map((_: any, i: number) => (
-                                    <SelectItem key={i} value={i.toString()}>
-                                      Posição {i + 1}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -2109,13 +2096,16 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
           <DialogHeader>
             <DialogTitle>Gerar Cronograma Automático</DialogTitle>
             <DialogDescription>
-              Classifica as etapas-raiz da planilha por fase típica de obra (fundação, estrutura,
+              Classifica as etapas da planilha por fase típica de obra (fundação, estrutura,
               alvenaria etc.), estima a duração de cada uma (histórico da própria empresa quando
               houver amostra suficiente, senão um padrão de mercado por fase) e monta datas e
-              predecessoras automaticamente a partir da data de início informada. Isso é sempre um
+              predecessoras automaticamente a partir da data de início informada. Etapas-raiz sem
+              sub-etapas entram num único cronograma encadeado; etapas-raiz COM sub-etapas (ex:
+              "Clube Social", "Casa Principal") viram uma frente de obra própria — as sub-etapas
+              são encadeadas só entre si, começando na mesma data de início. Isso é sempre um
               RASCUNHO: você pode ajustar a duração de qualquer etapa antes de confirmar — nada é
               gravado até você clicar em "Aplicar Cronograma". Etapas que já tinham datas serão
-              substituídas pelas novas ao confirmar. Sub-etapas não são afetadas.
+              substituídas pelas novas ao confirmar.
             </DialogDescription>
           </DialogHeader>
 
@@ -2146,7 +2136,12 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
                 <tbody>
                   {scheduleDraftRows.map((row) => (
                     <tr key={row.id} className="border-t">
-                      <td className="p-2 font-medium">{row.name}</td>
+                      <td className="p-2 font-medium">
+                        <span style={{ paddingLeft: row.depth * 16 }} className="inline-flex items-center">
+                          {row.depth > 0 && <span className="text-muted-foreground mr-1">↳</span>}
+                          {row.name}
+                        </span>
+                      </td>
                       <td className="p-2 text-muted-foreground">{row.phaseLabel}</td>
                       <td className="p-2">
                         <Input

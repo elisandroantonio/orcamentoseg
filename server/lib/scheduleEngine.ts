@@ -137,6 +137,7 @@ export interface StageInput {
   id: number;
   name: string;
   order: number;
+  parentStageId: number | null;
   serviceUnit: string | null;
   serviceQuantity: string | null; // decimal do banco vem como string
 }
@@ -144,6 +145,10 @@ export interface StageInput {
 export interface StageDraft {
   id: number;
   name: string;
+  // Profundidade na árvore, só pra indentação visual na prévia (0 = etapa
+  // raiz solta ou raiz sem sub-etapas; 1+ = sub-etapa, quanto mais fundo
+  // maior o número).
+  depth: number;
   phase: PhaseId;
   phaseLabel: string;
   durationDays: number;
@@ -151,6 +156,11 @@ export interface StageDraft {
   predecessorIds: number[];
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
+}
+
+interface LeafEntry {
+  stage: StageInput;
+  depth: number;
 }
 
 function estimateDuration(
@@ -213,31 +223,31 @@ function addDays(dateStr: string, days: number): string {
 }
 
 /**
- * Gera o rascunho completo de cronograma para as etapas raiz de um
- * orçamento (sub-etapas não entram nesta primeira versão — ficam com o
- * cronograma que o usuário já tiver definido manualmente, se houver).
+ * Roda o encadeamento por fase + forward-pass de datas pra um grupo
+ * FECHADO de etapas-folha (ou seja: as predecessoras só são buscadas
+ * dentro do próprio grupo). Usada tanto pro encadeamento global das
+ * etapas-raiz soltas quanto pro encadeamento local de cada "frente de
+ * obra" (etapa-raiz com sub-etapas) — ver generateScheduleDraft.
  */
-export function generateScheduleDraft(
-  stages: StageInput[],
+function scheduleLeafGroup(
+  leaves: LeafEntry[],
   projectStartDate: string,
   historicalRates: Map<string, number>
 ): StageDraft[] {
-  const ordered = [...stages].sort((a, b) => a.order - b.order);
-
   // Classifica e agrupa por fase, preservando a ordem original dentro de
   // cada fase.
-  const withPhase = ordered.map((s) => ({ stage: s, phase: classifyStagePhase(s.name) }));
+  const withPhase = leaves.map((entry) => ({ entry, phase: classifyStagePhase(entry.stage.name) }));
 
-  // Para cada fase presente no orçamento, guarda a lista de stageIds
-  // naquela fase, na ordem em que aparecem.
+  // Para cada fase presente no grupo, guarda a lista de stageIds naquela
+  // fase, na ordem em que aparecem.
   const stagesByPhase = new Map<PhaseId, number[]>();
-  for (const { stage, phase } of withPhase) {
+  for (const { entry, phase } of withPhase) {
     if (!stagesByPhase.has(phase)) stagesByPhase.set(phase, []);
-    stagesByPhase.get(phase)!.push(stage.id);
+    stagesByPhase.get(phase)!.push(entry.stage.id);
   }
 
   // Acha, pra cada fase presente, a fase anterior (na ordem canônica) que
-  // também está presente no orçamento — é dela que vem a predecessora.
+  // também está presente no grupo — é dela que vem a predecessora.
   function previousPresentPhase(phase: PhaseId): PhaseId | null {
     const idx = phaseIndex(phase);
     for (let i = idx - 1; i >= 0; i--) {
@@ -251,10 +261,10 @@ export function generateScheduleDraft(
 
   const drafts = new Map<number, Omit<StageDraft, "startDate" | "endDate">>();
 
-  for (const { stage, phase } of withPhase) {
-    const { days, source } = estimateDuration(stage, phase, historicalRates);
+  for (const { entry, phase } of withPhase) {
+    const { days, source } = estimateDuration(entry.stage, phase, historicalRates);
     const idsInPhase = stagesByPhase.get(phase)!;
-    const posInPhase = idsInPhase.indexOf(stage.id);
+    const posInPhase = idsInPhase.indexOf(entry.stage.id);
 
     const predecessorIds: number[] = [];
     if (posInPhase > 0) {
@@ -270,9 +280,10 @@ export function generateScheduleDraft(
       }
     }
 
-    drafts.set(stage.id, {
-      id: stage.id,
-      name: stage.name,
+    drafts.set(entry.stage.id, {
+      id: entry.stage.id,
+      name: entry.stage.name,
+      depth: entry.depth,
       phase,
       phaseLabel: phaseLabel(phase),
       durationDays: days,
@@ -282,21 +293,103 @@ export function generateScheduleDraft(
   }
 
   // Forward pass: como as fases seguem a ordem canônica e nunca há ciclo
-  // (uma etapa só depende de etapas de fase igual ou anterior), basta
-  // processar na ordem em que os stages foram percorridos acima.
+  // dentro do grupo, basta processar na ordem em que os stages foram
+  // percorridos acima.
   const computedEnd = new Map<number, string>();
   const result: StageDraft[] = [];
 
-  for (const { stage } of withPhase) {
-    const draft = drafts.get(stage.id)!;
+  for (const { entry } of withPhase) {
+    const draft = drafts.get(entry.stage.id)!;
     let start = projectStartDate;
     for (const predId of draft.predecessorIds) {
       const predEnd = computedEnd.get(predId);
       if (predEnd && predEnd > start) start = predEnd;
     }
     const end = addDays(start, draft.durationDays);
-    computedEnd.set(stage.id, end);
+    computedEnd.set(entry.stage.id, end);
     result.push({ ...draft, startDate: start, endDate: end });
+  }
+
+  return result;
+}
+
+/**
+ * Gera o rascunho completo de cronograma pra um orçamento, cobrindo
+ * etapas-raiz E sub-etapas (em qualquer profundidade):
+ *
+ *  - Etapas-raiz SEM sub-etapas entram todas juntas num único encadeamento
+ *    global de fases (mesmo comportamento de antes desta função existir
+ *    com hierarquia).
+ *  - Etapas-raiz COM sub-etapas viram sua própria "frente de obra"
+ *    independente: as sub-etapas-folha (netos, bisnetos etc. também
+ *    contam — só quem realmente não tem filho vira uma linha do
+ *    cronograma) são classificadas e encadeadas só entre si, a partir da
+ *    MESMA data de início do projeto — cada área/bloco roda seu próprio
+ *    cronograma, em paralelo aos demais. Isso evita tratar o container
+ *    (ex: "CLUBE SOCIAL") como se fosse uma única etapa "Não
+ *    classificada", que é o bug relatado.
+ *
+ * A etapa-container em si (a que tem sub-etapas) não recebe uma linha de
+ * cronograma própria — quem tem data são só as folhas, exatamente como já
+ * era feito manualmente antes deste motor existir.
+ */
+export function generateScheduleDraft(
+  stages: StageInput[],
+  projectStartDate: string,
+  historicalRates: Map<string, number>
+): StageDraft[] {
+  const childrenByParent = new Map<number | null, StageInput[]>();
+  for (const s of stages) {
+    const key = s.parentStageId;
+    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+    childrenByParent.get(key)!.push(s);
+  }
+  for (const arr of Array.from(childrenByParent.values())) {
+    arr.sort((a, b) => a.order - b.order);
+  }
+
+  const rootStages = childrenByParent.get(null) || [];
+
+  function collectLeaves(node: StageInput, depth: number, acc: LeafEntry[]) {
+    const kids = childrenByParent.get(node.id) || [];
+    if (kids.length === 0) {
+      acc.push({ stage: node, depth });
+      return;
+    }
+    for (const kid of kids) collectLeaves(kid, depth + 1, acc);
+  }
+
+  const flatLeaves: LeafEntry[] = [];
+  const groupedRootIds = new Set<number>();
+  for (const root of rootStages) {
+    if ((childrenByParent.get(root.id) || []).length > 0) {
+      groupedRootIds.add(root.id);
+    } else {
+      flatLeaves.push({ stage: root, depth: 0 });
+    }
+  }
+
+  // Encadeamento global de todas as etapas-raiz soltas (sem sub-etapas),
+  // numa única passada — preserva 100% o comportamento anterior pra
+  // orçamentos sem hierarquia.
+  const flatResults = flatLeaves.length > 0
+    ? scheduleLeafGroup(flatLeaves, projectStartDate, historicalRates)
+    : [];
+  const flatResultById = new Map(flatResults.map((r) => [r.id, r]));
+
+  // Monta o resultado final na ordem original de aparição das etapas-raiz
+  // na planilha: raiz solta -> sua linha calculada acima; raiz com
+  // sub-etapas -> bloco local (suas folhas, encadeadas só entre si).
+  const result: StageDraft[] = [];
+  for (const root of rootStages) {
+    if (groupedRootIds.has(root.id)) {
+      const acc: LeafEntry[] = [];
+      collectLeaves(root, 1, acc);
+      result.push(...scheduleLeafGroup(acc, projectStartDate, historicalRates));
+    } else {
+      const r = flatResultById.get(root.id);
+      if (r) result.push(r);
+    }
   }
 
   return result;
