@@ -136,10 +136,15 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
   // nenhuma indicação visual de hierarquia. Aqui a lista é reordenada em
   // pré-ordem (pai, depois seus filhos, recursivamente) e cada item ganha um
   // `depth` usado só pra indentar visualmente — não altera nada no banco.
-  // Dentro de cada grupo de irmãs, ordena por Data de Início (igual à lógica
-  // de normalizeStageOrder no servidor) — com `order`/`id` só como
-  // desempate — pra não depender do contador `order` quando ele estiver
-  // fora de sequência.
+  // Dentro de cada grupo de irmãs, ordena primeiro por `scheduleOrder` —
+  // é o campo que o arrastar-e-soltar (moveStageToPosition) e as antigas
+  // setas ↑/↓ (reorderStage) alteram, então tem que ser o critério
+  // principal, senão a posição manual "não fixa": a etapa arrastada
+  // continua com a mesma Data de Início de antes, então se a Data de
+  // Início mandasse no critério de ordenação a linha voltava pro lugar de
+  // origem assim que a lista fosse recomputada. Data de Início só entra
+  // como critério pra etapas que ainda não têm `scheduleOrder` definido
+  // (nunca passaram por normalizeStageOrder — ex: acabaram de ser criadas).
   const orderedStages = useMemo(() => {
     const byParent = new Map<number | null, any[]>();
     for (const s of stages as any[]) {
@@ -149,12 +154,24 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
     }
     for (const arr of Array.from(byParent.values())) {
       arr.sort((a: any, b: any) => {
+        const aHasOrder = a.scheduleOrder !== null && a.scheduleOrder !== undefined;
+        const bHasOrder = b.scheduleOrder !== null && b.scheduleOrder !== undefined;
+        if (aHasOrder && bHasOrder) {
+          return a.scheduleOrder - b.scheduleOrder || a.id - b.id;
+        }
+        if (aHasOrder !== bHasOrder) {
+          // Quem já tem scheduleOrder definido sempre vem antes de quem
+          // ainda não tem (etapa nova) — evita que uma etapa recém-criada
+          // (sem data ainda) se intrometa no meio de uma ordem já manual.
+          return aHasOrder ? -1 : 1;
+        }
+        // Nenhuma das duas tem scheduleOrder ainda — usa Data de Início
+        // como critério auxiliar (igual à lógica de normalizeStageOrder
+        // no servidor pra etapas nunca normalizadas).
         const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
         const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
         if (aTime !== bTime) return aTime - bTime;
-        // scheduleOrder é a ordem do Gantt (nunca o `order` da planilha do
-        // orçamento — esse número não deve mudar por causa do cronograma).
-        return (a.scheduleOrder ?? a.order ?? 0) - (b.scheduleOrder ?? b.order ?? 0) || a.id - b.id;
+        return (a.order ?? 0) - (b.order ?? 0) || a.id - b.id;
       });
     }
     const result: any[] = [];

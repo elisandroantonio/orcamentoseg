@@ -494,10 +494,21 @@ export async function recalculateItemTotalCost(budgetItemId: number) {
  * são campos diferentes.
  *
  * Dentro de cada grupo de irmãs (todas as etapas raiz entre si, e todas as
- * sub-etapas de uma mesma etapa-mãe entre si), a ordem é decidida pela Data
- * de Início: quem começa mais cedo vem primeiro. Etapas sem data (ou
- * empatadas na mesma data) usam o `scheduleOrder`/`order`/`id` anteriores
- * como critério de desempate, só pra manter alguma ordem estável.
+ * sub-etapas de uma mesma etapa-mãe entre si), quem já tem `scheduleOrder`
+ * definido MANTÉM sua posição relativa — essa função nunca reordena quem
+ * já foi ordenado manualmente (arrastar-e-soltar / setas ↑↓). Só decide a
+ * posição de quem ainda não tem `scheduleOrder` (etapa nova, nunca passou
+ * por aqui): entra pela Data de Início (quem começa mais cedo vem
+ * primeiro; sem data ou empatada usa `order`/`id` como desempate) e vai
+ * sempre DEPOIS de quem já tem ordem manual.
+ *
+ * Importante ser assim (idempotente) porque essa função é chamada no
+ * INÍCIO de moveStageToPosition e reorderStage, antes de aplicar o
+ * reposicionamento pedido pelo usuário — se ela recalculasse tudo do zero
+ * por data a cada chamada (como fazia antes), a reordenação manual de uma
+ * etapa era desfeita assim que o usuário tentasse mover outra etapa
+ * (porque a Data de Início da etapa movida não muda com o
+ * reposicionamento).
  *
  * Chamada automaticamente ao final de createStage, então não depende do
  * usuário clicar em "Reorganizar Etapas" pra corrigir isso na hora.
@@ -523,18 +534,27 @@ export async function normalizeStageOrder(budgetId: number): Promise<void> {
     if (!byParent.has(key)) byParent.set(key, []);
     byParent.get(key)!.push(s);
   }
-  for (const arr of Array.from(byParent.values())) {
-    arr.sort((a, b) => {
-      const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
-      const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
-      if (aTime !== bTime) return aTime - bTime;
-      return (a.scheduleOrder ?? a.order ?? 0) - (b.scheduleOrder ?? b.order ?? 0) || a.id - b.id;
-    });
-  }
   const canonicalOrder: { id: number; scheduleOrder: number }[] = [];
   const visited = new Set<number>();
   const walk = (parentId: number | null) => {
-    for (const child of byParent.get(parentId) || []) {
+    const group = byParent.get(parentId) || [];
+
+    // Quem já tem scheduleOrder definido preserva a ordem relativa entre
+    // si (nunca é re-derivada da data). Quem ainda não tem entra por Data
+    // de Início, sempre depois de quem já tem ordem manual.
+    const withOrder = group
+      .filter((s) => s.scheduleOrder !== null && s.scheduleOrder !== undefined)
+      .sort((a, b) => (a.scheduleOrder as number) - (b.scheduleOrder as number) || a.id - b.id);
+    const withoutOrder = group
+      .filter((s) => s.scheduleOrder === null || s.scheduleOrder === undefined)
+      .sort((a, b) => {
+        const aTime = a.startDate ? new Date(a.startDate).getTime() : Infinity;
+        const bTime = b.startDate ? new Date(b.startDate).getTime() : Infinity;
+        if (aTime !== bTime) return aTime - bTime;
+        return (a.order ?? 0) - (b.order ?? 0) || a.id - b.id;
+      });
+
+    for (const child of [...withOrder, ...withoutOrder]) {
       if (visited.has(child.id)) continue;
       visited.add(child.id);
       canonicalOrder.push({ id: child.id, scheduleOrder: canonicalOrder.length });
