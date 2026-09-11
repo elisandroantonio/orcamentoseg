@@ -85,8 +85,8 @@ interface HierarchicalBudgetViewProps {
   onUpdateCompositionToBase?: (compositionId: number, budgetItemId: number | undefined, inputs: Array<{ inputId: number; coefficient: number; unitCost: number }>) => Promise<void>;
   onSaveCompositionForBudget?: (compositionId: number, budgetItemId: number, inputs: CompositionInput[]) => Promise<void>;
   showBdiConfig?: boolean;
-  bdiConfigs?: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }>;
-  onUpdateBdiConfig?: (itemId: number, config: { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean }) => void;
+  bdiConfigs?: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean; excludeMaterialOverride?: boolean }>;
+  onUpdateBdiConfig?: (itemId: number, config: { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; laborAdjustment?: number; materialAdjustment?: number; includeMaterialOverride?: boolean; excludeMaterialOverride?: boolean }) => void;
   onMoveItemUp?: (itemId: number) => void; // Melhoria 17
   onMoveItemDown?: (itemId: number) => void; // Melhoria 17
   includeMaterial?: boolean; // Controle de exibição de material (desabilitar = apenas mão de obra)
@@ -456,6 +456,7 @@ export default function HierarchicalBudgetView({
     materialAdjustment?: number;
     laborAdjustment?: number;
     includeMaterialOverride?: boolean;
+    excludeMaterialOverride?: boolean;
   }) => {
     if (!config) return false;
     return (
@@ -463,6 +464,7 @@ export default function HierarchicalBudgetView({
       config.applyBdiToLabor === false ||
       config.aplicarEncargosSociais === false ||
       config.includeMaterialOverride === true ||
+      config.excludeMaterialOverride === true ||
       (config.materialAdjustment ?? 0) !== 0 ||
       (config.laborAdjustment ?? 0) !== 0
     );
@@ -513,7 +515,8 @@ export default function HierarchicalBudgetView({
         ? Number(child.materialCost)
         : (customCosts[child.id]?.materialCost ?? Number(child.materialCost));
       const forceInclude = bdiConfigs[child.id]?.includeMaterialOverride === true;
-      const effectiveMat = (includeMaterial || forceInclude) ? mat : 0; // Zerar material se desabilitado (exceto override por composição)
+      const forceExclude = bdiConfigs[child.id]?.excludeMaterialOverride === true;
+      const effectiveMat = forceExclude ? 0 : (includeMaterial || forceInclude) ? mat : 0; // Zerar material se desabilitado (exceto override por composição); excludeMaterialOverride sempre ganha
       // Aplicar materialAdjustment do filho na soma do pai — mesmo padrão do
       // laborAdjustment logo abaixo (zerado quando showBdiConfig=true porque
       // aí os valores já chegam prontos com BDI/ajustes aplicados).
@@ -664,7 +667,8 @@ export default function HierarchicalBudgetView({
             ? Number(child.materialCost)
             : (customCosts[child.id]?.materialCost ?? Number(child.materialCost));
           const childForceInclude = bdiConfigs[child.id]?.includeMaterialOverride === true;
-          const childMatEffective = (includeMaterial || childForceInclude) ? childMatRaw : 0; // Zerar material se desabilitado (exceto override por composição)
+          const childForceExclude = bdiConfigs[child.id]?.excludeMaterialOverride === true;
+          const childMatEffective = childForceExclude ? 0 : (includeMaterial || childForceInclude) ? childMatRaw : 0; // Zerar material se desabilitado (exceto override por composição); excludeMaterialOverride sempre ganha
           // Aplicar materialAdjustment do filho — mesmo padrão do laborAdjustment logo abaixo.
           const childMaterialAdj = bdiConfigs[child.id]?.materialAdjustment ?? 0;
           const childMat = childMatEffective * (1 + childMaterialAdj / 100);
@@ -832,6 +836,18 @@ export default function HierarchicalBudgetView({
                                   <span className="text-sm">Incluir Material na Composição</span>
                                 </label>
                               )}
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={bdiConfigs[child.id]?.excludeMaterialOverride ?? false}
+                                  onChange={(e) => {
+                                    const currentConfig = bdiConfigs[child.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+                                    onUpdateBdiConfig(child.id, { ...currentConfig, excludeMaterialOverride: e.target.checked });
+                                  }}
+                                  className="h-4 w-4"
+                                />
+                                <span className="text-sm text-red-700">Excluir Material (fatura direto p/ cliente)</span>
+                              </label>
                               <div className="space-y-1">
                                 <label className="text-sm font-semibold text-blue-700">Ajuste Material (%)</label>
                                 <p className="text-xs text-slate-500">Acréscimo (+) ou desconto (-) sobre o Material desta composição</p>
@@ -1202,6 +1218,18 @@ export default function HierarchicalBudgetView({
                           <span className="text-sm">Incluir Material na Composição</span>
                         </label>
                       )}
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bdiConfigs[item.id]?.excludeMaterialOverride ?? false}
+                          onChange={(e) => {
+                            const currentConfig = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+                            onUpdateBdiConfig(item.id, { ...currentConfig, excludeMaterialOverride: e.target.checked });
+                          }}
+                          className="h-4 w-4"
+                        />
+                        <span className="text-sm text-red-700">Excluir Material (fatura direto p/ cliente)</span>
+                      </label>
                       <div className="space-y-1">
                         <label className="text-sm font-semibold text-blue-700">Ajuste Material (%)</label>
                         <p className="text-xs text-slate-500">Acréscimo (+) ou desconto (-) sobre o Material desta composição</p>
@@ -1436,7 +1464,8 @@ export default function HierarchicalBudgetView({
       const mat = children.reduce((sum, child) => {
         const m = customCosts[child.id]?.materialCost ?? Number(child.materialCost);
         const forceInclude = bdiConfigs[child.id]?.includeMaterialOverride === true;
-        const effectiveM = (includeMaterial || forceInclude) ? m : 0; // Zerar material se desabilitado (exceto override por composição)
+        const forceExclude = bdiConfigs[child.id]?.excludeMaterialOverride === true;
+        const effectiveM = forceExclude ? 0 : (includeMaterial || forceInclude) ? m : 0; // Zerar material se desabilitado (exceto override por composição); excludeMaterialOverride sempre ganha
         // Aplicar materialAdjustment do filho no cálculo do total da etapa — mesmo padrão do laborAdjustment logo abaixo.
         const childMaterialAdj = bdiConfigs[child.id]?.materialAdjustment ?? 0;
         const effectiveMAdj = effectiveM * (1 + childMaterialAdj / 100);
@@ -1455,7 +1484,8 @@ export default function HierarchicalBudgetView({
       return { material: mat, labor: lab, total: mat + lab };
     }
     // Para itens normais: usar customCosts se disponível
-    const mat = (customCosts[item.id]?.materialCost ?? Number(item.materialCost)) * qty;
+    const itemForceExclude = bdiConfigs[item.id]?.excludeMaterialOverride === true;
+    const mat = itemForceExclude ? 0 : (customCosts[item.id]?.materialCost ?? Number(item.materialCost)) * qty;
     const labRaw = (customCosts[item.id]?.laborCost ?? Number(item.laborCost)) * qty;
     // Aplicar laborAdjustment da composição simples no total da etapa
     const itemLaborAdj = bdiConfigs[item.id]?.laborAdjustment ?? 0;

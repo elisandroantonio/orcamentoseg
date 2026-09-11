@@ -68,6 +68,7 @@ export default function BudgetDashboard() {
         discount: c.discount !== undefined ? Number(c.discount) : undefined,
         aplicarEncargosSociais: c.aplicarEncargosSociais,
         includeMaterialOverride: Number(c.includeMaterialOverride) === 1,
+        excludeMaterialOverride: Number(c.excludeMaterialOverride) === 1,
       },
     ])
   );

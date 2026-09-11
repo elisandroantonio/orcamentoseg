@@ -735,7 +735,11 @@ export async function recalculateBudgetTotals(
     const service = Number(item.serviceCost || 0);
     const other = Number(item.otherCost || 0);
 
-    const effectiveMaterial = (includeMaterial || item.includeMaterialOverride === 1) ? material : 0;
+    // excludeMaterialOverride sempre GANHA de tudo (toggle geral e
+    // includeMaterialOverride) — ver mesma regra em getStages (routers.ts).
+    const effectiveMaterial = item.excludeMaterialOverride === 1
+      ? 0
+      : (includeMaterial || item.includeMaterialOverride === 1) ? material : 0;
     const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
     const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0; // coluna já vem com default 1
     const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);

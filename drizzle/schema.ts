@@ -263,6 +263,12 @@ export const budgetItems = mysqlTable("budget_items", {
   // orçamentos de apenas mão de obra. Só tem efeito quando o toggle geral
   // está OFF; quando ligado, o material já entra normalmente pra todos.
   includeMaterialOverride: tinyint("includeMaterialOverride").notNull().default(0), // 1 = incluir material desta composição mesmo com o toggle geral desligado
+  // Oposto do campo acima: exclui o material desta composição/item mesmo
+  // com o toggle geral "Incluir Material no Orçamento" LIGADO. Uso: contrato
+  // onde o cliente fatura direto o material de certos itens (ex: fornecedor
+  // direto) e a EG só fecha a mão de obra daquele item no orçamento. Sempre
+  // que ligado, GANHA de tudo (toggle geral e includeMaterialOverride).
+  excludeMaterialOverride: tinyint("excludeMaterialOverride").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (table) => ({
   budgetIdIdx: index("budget_items_budgetId_idx").on(table.budgetId),

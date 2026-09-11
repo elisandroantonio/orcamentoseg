@@ -67,7 +67,7 @@ interface MeasurementItemData {
 interface BudgetFinanceiroProps {
   budgetId: number;
   stages: BudgetStage[];
-  bdiConfigs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; includeMaterialOverride?: boolean }>;
+  bdiConfigs: Record<number, { applyBdiToMaterial: boolean; applyBdiToLabor: boolean; additionalIncrement: number; discount?: number; aplicarEncargosSociais?: boolean; includeMaterialOverride?: boolean; excludeMaterialOverride?: boolean }>;
   socialCharges: number;
   adminCentral: number;
   profit: number;
@@ -197,7 +197,9 @@ function OriginalBudgetTab({
     const other = Number(item.otherCost);
     const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
     // aplicarEncargosSociais/includeMaterialOverride vivem em budget_items, não na config de BDI
-    const material = (includeMaterial || Number((item as any).includeMaterialOverride) === 1) ? rawMaterial : 0;
+    const material = Number((item as any).excludeMaterialOverride) === 1
+      ? 0
+      : (includeMaterial || Number((item as any).includeMaterialOverride) === 1) ? rawMaterial : 0;
     const aplicarEncargos = Number((item as any).aplicarEncargosSociais) !== 0;
     const bdiMult = calcBDIMultiplier(config.additionalIncrement, config.discount || 0);
     const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
@@ -1122,7 +1124,9 @@ export function BudgetFinanceiro({
               const labor = Number(child.laborCost);
               const config = bdiConfigs[child.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
               // aplicarEncargosSociais/includeMaterialOverride vivem em budget_items
-              const material = (includeMaterial || Number((child as any).includeMaterialOverride) === 1) ? Number(child.materialCost) : 0;
+              const material = Number((child as any).excludeMaterialOverride) === 1
+                ? 0
+                : (includeMaterial || Number((child as any).includeMaterialOverride) === 1) ? Number(child.materialCost) : 0;
               const bdiMult = calcBDI(config.additionalIncrement, config.discount || 0);
               const laborWithCharges = labor * (1 + (Number((child as any).aplicarEncargosSociais) !== 0 ? socialCharges : 0) / 100);
               const childMaterialAdj = Number((child as any).materialAdjustment) || 0;
@@ -1140,7 +1144,9 @@ export function BudgetFinanceiro({
             const labor = Number(item.laborCost);
             const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
             // aplicarEncargosSociais/includeMaterialOverride vivem em budget_items
-            const material = (includeMaterial || Number((item as any).includeMaterialOverride) === 1) ? Number(item.materialCost) : 0;
+            const material = Number((item as any).excludeMaterialOverride) === 1
+              ? 0
+              : (includeMaterial || Number((item as any).includeMaterialOverride) === 1) ? Number(item.materialCost) : 0;
             const bdiMult = calcBDI(config.additionalIncrement, config.discount || 0);
             const laborWithCharges = labor * (1 + (Number((item as any).aplicarEncargosSociais) !== 0 ? socialCharges : 0) / 100);
             const matAdjPct = Number((item as any).materialAdjustment) || 0;
@@ -1202,7 +1208,9 @@ export function BudgetFinanceiro({
         const oth = Number(item.otherCost);
         const cfg = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
         // aplicarEncargosSociais/includeMaterialOverride vivem em budget_items
-        const mat = (includeMat || Number(item.includeMaterialOverride) === 1) ? Number(item.materialCost) : 0;
+        const mat = Number((item as any).excludeMaterialOverride) === 1
+          ? 0
+          : (includeMat || Number(item.includeMaterialOverride) === 1) ? Number(item.materialCost) : 0;
         const bdiMult = calcBDIMult(cfg.additionalIncrement, cfg.discount || 0);
         const laborWithCharges = lab * (1 + (Number(item.aplicarEncargosSociais) !== 0 ? sc : 0) / 100);
         const matB = cfg.applyBdiToMaterial ? mat * bdiMult : mat;

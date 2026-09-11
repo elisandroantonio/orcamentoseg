@@ -992,6 +992,7 @@ export const appRouter = router({
             laborAdjustment: item.laborAdjustment,
             materialAdjustment: item.materialAdjustment,
             includeMaterialOverride: item.includeMaterialOverride,
+            excludeMaterialOverride: item.excludeMaterialOverride,
           });
 
           const newItemId = Number(itemResult.insertId);
@@ -1627,6 +1628,7 @@ export const appRouter = router({
             laborAdjustment: budgetItems.laborAdjustment,
             materialAdjustment: budgetItems.materialAdjustment,
             includeMaterialOverride: budgetItems.includeMaterialOverride,
+            excludeMaterialOverride: budgetItems.excludeMaterialOverride,
             composition: {
               id: compositions.id,
               code: compositions.code,
@@ -1667,6 +1669,7 @@ export const appRouter = router({
                 laborAdjustment: budgetItems.laborAdjustment,
                 materialAdjustment: budgetItems.materialAdjustment,
                 includeMaterialOverride: budgetItems.includeMaterialOverride,
+                excludeMaterialOverride: budgetItems.excludeMaterialOverride,
                 composition: {
                   id: compositions.id,
                   code: compositions.code,
@@ -1765,6 +1768,7 @@ export const appRouter = router({
           laborAdjustment: string | null;
           materialAdjustment: string | null;
           includeMaterialOverride: number | null;
+          excludeMaterialOverride: number | null;
         };
 
         // Valor de material/M.O. de UM item (composição simples ou filho de
@@ -1781,7 +1785,13 @@ export const appRouter = router({
           // includeMaterialOverride: força incluir o material desta composição
           // mesmo com o toggle geral desligado (ex: escavação, tapume,
           // almoxarifado, container) — mesma regra do client (Comp. BDI).
-          const effectiveMaterial = (includeMaterial || item.includeMaterialOverride === 1) ? material : 0;
+          // excludeMaterialOverride: o oposto — exclui o material desta
+          // composição mesmo com o toggle geral ligado (ex: contrato onde o
+          // cliente fatura direto o material de um item específico). Sempre
+          // GANHA de tudo, inclusive de includeMaterialOverride.
+          const effectiveMaterial = item.excludeMaterialOverride === 1
+            ? 0
+            : (includeMaterial || item.includeMaterialOverride === 1) ? material : 0;
           const config = bdiConfigByItem.get(item.id) || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
           const aplicarEncargos = item.aplicarEncargosSociais !== 0; // coluna já vem com default 1
           const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
@@ -3401,6 +3411,7 @@ export const appRouter = router({
         laborAdjustment: z.number().optional(), // Melhoria 17: ajuste % sobre M.O.
         materialAdjustment: z.number().optional(), // Ajuste % sobre Material
         includeMaterialOverride: z.boolean().optional(), // Força incluir material desta composição mesmo com includeMaterial geral desligado
+        excludeMaterialOverride: z.boolean().optional(), // Exclui material desta composição mesmo com includeMaterial geral ligado
       }))
       .mutation(async ({ ctx, input }) => {
         const database = await getDb();
@@ -3457,6 +3468,9 @@ export const appRouter = router({
         if (input.includeMaterialOverride !== undefined) {
           itemUpdates.includeMaterialOverride = input.includeMaterialOverride ? 1 : 0;
         }
+        if (input.excludeMaterialOverride !== undefined) {
+          itemUpdates.excludeMaterialOverride = input.excludeMaterialOverride ? 1 : 0;
+        }
         if (Object.keys(itemUpdates).length > 0) {
           await database
             .update(budgetItems)
@@ -3488,7 +3502,7 @@ export const appRouter = router({
         const rawConfigs = await db.rawQueryParams(
           `SELECT bdi.id, bdi.budgetItemId, bdi.applyBdiToMaterial, bdi.applyBdiToLabor,
            bdi.additionalIncrement, bi.materialAdjustment, bi.laborAdjustment, bi.aplicarEncargosSociais,
-           bi.includeMaterialOverride
+           bi.includeMaterialOverride, bi.excludeMaterialOverride
            FROM budget_item_bdi_config bdi
            INNER JOIN budget_items bi ON bdi.budgetItemId = bi.id
            WHERE bi.budgetId = ?`,
@@ -3505,6 +3519,7 @@ export const appRouter = router({
           laborAdjustment: r.laborAdjustment ?? '0',
           aplicarEncargosSociais: r.aplicarEncargosSociais,
           includeMaterialOverride: r.includeMaterialOverride,
+          excludeMaterialOverride: r.excludeMaterialOverride,
         }));
         
         return configs;
