@@ -17,7 +17,7 @@ const MONTH_NAMES = [
 // { ano: { mes(1-12): valor } }
 export type CubScTable = Record<number, Record<number, number>>;
 
-function stripTags(html: string): string {
+export function stripTags(html: string): string {
   return html
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")

@@ -1,7 +1,24 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { rawQuery } from "../db";
-import { fetchCubScTable } from "../lib/cubSc";
+import { fetchCubScTable, type CubScTable } from "../lib/cubSc";
+import { fetchCubScChapecoTable } from "../lib/cubScChapeco";
+
+// Mescla duas tabelas de CUB/SC (ano -> mês -> valor). Em caso de o mesmo
+// ano/mês existir nas duas, o valor de `overlay` vence — usado para dar
+// prioridade à fonte mais atualizada (Chapecó) sobre a mais antiga
+// (SENGE-SC) quando ambas trazem o mesmo período.
+function mergeCubScTables(base: CubScTable, overlay: CubScTable): CubScTable {
+  const merged: CubScTable = {};
+  for (const [yearStr, months] of Object.entries(base)) {
+    merged[Number(yearStr)] = { ...months };
+  }
+  for (const [yearStr, months] of Object.entries(overlay)) {
+    const year = Number(yearStr);
+    merged[year] = { ...(merged[year] || {}), ...months };
+  }
+  return merged;
+}
 
 type Row = { year: number; month: number; value: string; source: "auto" | "manual" };
 
@@ -54,11 +71,40 @@ export const cubScRouter = router({
     return buildSummary(rows);
   }),
 
-  // Busca a tabela pública mais recente e atualiza o histórico. Nunca
+  // Busca a tabela pública mais recente nas duas fontes conhecidas
+  // (Sinduscon-Chapecó e SENGE-SC) e atualiza o histórico. O Sinduscon-
+  // Chapecó tende a publicar o mês mais recente primeiro (ver comentário em
+  // lib/cubScChapeco.ts sobre a diferença de convenção de mês entre as
+  // fontes, já compensada no parser); o SENGE-SC funciona como reforço —
+  // nenhuma das duas derruba a outra, e só falha se AMBAS falharem. Nunca
   // sobrescreve um valor que tenha sido corrigido manualmente (source =
   // 'manual') — só atualiza/cria linhas que já eram 'auto'.
   refresh: protectedProcedure.mutation(async () => {
-    const table = await fetchCubScTable();
+    let sengeTable: CubScTable = {};
+    let chapecoTable: CubScTable = {};
+    const errors: string[] = [];
+
+    try {
+      sengeTable = await fetchCubScTable();
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+
+    try {
+      chapecoTable = await fetchCubScChapecoTable();
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+
+    if (Object.keys(sengeTable).length === 0 && Object.keys(chapecoTable).length === 0) {
+      throw new Error(
+        errors.join(" | ") || "Não consegui buscar o CUB/SC em nenhuma fonte automática."
+      );
+    }
+
+    // Chapecó por cima do SENGE-SC: em caso de conflito no mesmo ano/mês,
+    // vale o valor mais recente/atualizado.
+    const table = mergeCubScTables(sengeTable, chapecoTable);
     let upserted = 0;
 
     for (const [yearStr, months] of Object.entries(table)) {
