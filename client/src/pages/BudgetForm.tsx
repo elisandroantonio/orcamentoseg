@@ -2041,7 +2041,13 @@ export default function BudgetForm() {
                       }
                       
                       // 2-5. Lucro, Impostos, Risco, Garantia (sobre base com encargos)
-                      const baseValue = (effectiveMaterial + laborWithCharges + equipment + service + other) * qty;
+                      // Corrigido: a base agora respeita applyBdiToMaterial/applyBdiToLabor por
+                      // item, igual ao que materialWithBDI/laborWithBDI já fazem — antes, o
+                      // material/M.O. continuavam gerando lucro/impostos/risco/garantia mesmo
+                      // com o BDI desligado para eles, divergindo do que o checkbox promete.
+                      const baseMaterial = itemConfig.applyBdiToMaterial ? effectiveMaterial : 0;
+                      const baseLabor = itemConfig.applyBdiToLabor ? laborWithCharges : 0;
+                      const baseValue = (baseMaterial + baseLabor + equipment + service + other) * qty;
                       totalLucroValue += baseValue * (profit / 100);
                       totalImpostosValue += baseValue * (taxes / 100);
                       totalRiscoValue += baseValue * (risk / 100);
@@ -3216,7 +3222,13 @@ export default function BudgetForm() {
                       }
                       
                       // 2-5. Lucro, Impostos, Risco, Garantia (sobre base com encargos)
-                      const baseValue = (effectiveMaterial + laborWithCharges + equipment + service + other) * qty;
+                      // Corrigido: a base agora respeita applyBdiToMaterial/applyBdiToLabor por
+                      // item, igual ao que materialWithBDI/laborWithBDI já fazem — antes, o
+                      // material/M.O. continuavam gerando lucro/impostos/risco/garantia mesmo
+                      // com o BDI desligado para eles, divergindo do que o checkbox promete.
+                      const baseMaterial = itemConfig.applyBdiToMaterial ? effectiveMaterial : 0;
+                      const baseLabor = itemConfig.applyBdiToLabor ? laborWithCharges : 0;
+                      const baseValue = (baseMaterial + baseLabor + equipment + service + other) * qty;
                       totalLucroValue += baseValue * (profit / 100);
                       totalImpostosValue += baseValue * (taxes / 100);
                       totalRiscoValue += baseValue * (risk / 100);
