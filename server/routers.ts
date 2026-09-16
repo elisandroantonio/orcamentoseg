@@ -15,7 +15,7 @@ import {
   inputs, compositions, compositionInputs, projects, budgets, budgetItems, budgetItemInputs,
   budgetStages, scheduleActivities, schedulePeriods, disbursements, categories, clients, companySettings,
   budgetItemBdiConfig, budgetSchedulePeriods, budgetScheduleItems, budgetMonthlyDistribution,
-  measurementPeriods, measurementItems, contractAdditives
+  measurementPeriods, measurementItems, contractAdditives, materialListItems
 } from "../drizzle/schema";
 import { eq, and, sql, isNotNull, isNull, inArray } from "drizzle-orm";
 // Exportação movida para frontend (jsPDF + xlsx)
@@ -2247,9 +2247,25 @@ export const appRouter = router({
           }
         }
 
-        // Excluir os itens dessas etapas ANTES de excluir as etapas
+        // Excluir/desvincular TUDO que referencia essas etapas ANTES de
+        // excluir as etapas. Não confiar no "on delete cascade"/"on delete
+        // set null" declarado em drizzle/schema.ts para budget_schedule_items,
+        // budget_monthly_distribution e material_list_items: já descobrimos
+        // antes (ver comentário acima sobre budgetItems.stageId/ORC-2026-047)
+        // que os FKs realmente aplicados na produção podem não bater com o
+        // schema — se uma dessas tabelas tiver o FK sem cascade, o DELETE de
+        // budget_stages abaixo falha com erro de foreign key (aparecendo pro
+        // usuário só como "Erro ao excluir etapa"). Apagando/zerando aqui na
+        // mão, o resultado é o mesmo independente do que estiver valendo no
+        // banco.
         for (const stageId of Array.from(idsToDelete)) {
           await database.delete(budgetItems).where(eq(budgetItems.stageId, stageId));
+          await database.delete(budgetScheduleItems).where(eq(budgetScheduleItems.stageId, stageId));
+          await database.delete(budgetMonthlyDistribution).where(eq(budgetMonthlyDistribution.stageId, stageId));
+          await database
+            .update(materialListItems)
+            .set({ stageId: null })
+            .where(eq(materialListItems.stageId, stageId));
         }
 
         // Remover etapa (cascade removerá sub-etapas)

@@ -1343,7 +1343,11 @@ export default function BudgetForm() {
       toast.success("Etapa excluída com sucesso");
       refetchStages();
     } catch (error) {
-      toast.error("Erro ao excluir etapa");
+      // Mostrar a mensagem real do erro (em vez de um texto genérico) —
+      // sem isso, qualquer falha no servidor (FK, permissão, etc.) aparece
+      // igual pro usuário e fica impossível diagnosticar sem olhar o log.
+      const msg = error instanceof Error ? error.message : String(error);
+      toast.error(`Erro ao excluir etapa: ${msg}`);
     }
   };
   
