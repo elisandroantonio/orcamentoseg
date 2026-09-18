@@ -59,6 +59,7 @@ interface BDIState {
   tipoObra: string; tipoRisco: string; iss: number;
   pis: number; cofins: number; presIRPJ: number; presCSLL: number;
   aliqIRPJ: number; aliqCSLL: number;
+  regimeTributario: "presumido" | "real"; margemLucroReal: number;
   acAluguel: number; acSalarios: number; acContador: number; acVeiculo: number;
   acTi: number; acSeguros: number; acOutros: number; acDeprec: number;
   diasMes: number; insalub: number;
@@ -67,10 +68,17 @@ interface BDIState {
   projAC: number; projL: number; projR: number; projG: number;
 }
 
+// PIS/COFINS não-cumulativos (Lucro Real) — alíquota cheia, sem créditos de
+// insumos (opção do usuário: estimativa conservadora, mais simples que
+// modelar custos/créditos que esta calculadora não cadastra).
+const PIS_REAL_PCT = 1.65;
+const COFINS_REAL_PCT = 7.60;
+
 const DEFAULT_STATE: BDIState = {
   fatMensal: 150000, fatAnual: 1800000, nObras: 3, porte: 400000, prazo: 8,
   tipoObra: "global", tipoRisco: "comercial", iss: 3.00,
   pis: 0.65, cofins: 3.00, presIRPJ: 8, presCSLL: 12, aliqIRPJ: 15, aliqCSLL: 9,
+  regimeTributario: "presumido", margemLucroReal: 12,
   acAluguel: 2500, acSalarios: 8000, acContador: 1200, acVeiculo: 2000,
   acTi: 800, acSeguros: 600, acOutros: 800, acDeprec: 500,
   diasMes: 22, insalub: 0,
@@ -269,7 +277,11 @@ const TabEmpresa = memo(() => {
 TabEmpresa.displayName = "TabEmpresa";
 
 // =================== ABA TRIBUTÁRIO ===================
-const TabTributario = memo(() => {
+// Duas sub-abas: Lucro Presumido (regime original desta calculadora) e Lucro
+// Real (novo). A sub-aba selecionada É o regime usado no restante do app —
+// trocar de aba aqui muda o Total I que alimenta o BDI (aba 5) e a Memória
+// (aba 7), igual a mudar qualquer outro parâmetro tributário.
+const TabTributarioPresumido = memo(() => {
   const { s, set, adicIRPJ, totalI } = useBDI();
   const irpj = s.presIRPJ / 100 * s.aliqIRPJ + adicIRPJ();
   const csll = s.presCSLL / 100 * s.aliqCSLL;
@@ -280,7 +292,7 @@ const TabTributario = memo(() => {
   return (
     <div>
       <InfoAlert>PIS, COFINS, ISS e as bases de presunção são configurados automaticamente conforme o tipo de contrato selecionado na aba Empresa. Ajuste manualmente apenas se houver particularidades.</InfoAlert>
-      <SectionLabel>Regime tributário — Lucro Presumido</SectionLabel>
+      <SectionLabel>Tributos — regime cumulativo (Lucro Presumido)</SectionLabel>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <NumField label="PIS (%)" value={s.pis} step={0.01} onChange={v => set("pis", v)} hint="Lucro Presumido — regime cumulativo. Lei 10.637/02." />
         <NumField label="COFINS (%)" value={s.cofins} step={0.01} onChange={v => set("cofins", v)} hint="Lucro Presumido — regime cumulativo. Lei 10.833/03." />
@@ -340,6 +352,107 @@ const TabTributario = memo(() => {
         <MetricCard label="CSLL" value={fmtP(csll)} />
         <MetricCard label="Total I (BDI)" value={fmtP(total)} variant="accent" />
       </div>
+    </div>
+  );
+});
+TabTributarioPresumido.displayName = "TabTributarioPresumido";
+
+const TabTributarioReal = memo(() => {
+  const { s, set, adicIRPJ, totalI } = useBDI();
+  const irpj = s.margemLucroReal / 100 * s.aliqIRPJ + adicIRPJ();
+  const csll = s.margemLucroReal / 100 * s.aliqCSLL;
+  const total = totalI();
+  const lucroRealMensal = s.fatMensal * s.margemLucroReal / 100;
+  return (
+    <div>
+      <InfoAlert variant="warn">
+        No Lucro Real, IRPJ e CSLL incidem sobre o lucro contábil de verdade — não sobre uma presunção fixa. Como esta calculadora não cadastra custos/despesas detalhados, informe abaixo sua <strong>margem líquida estimada</strong> (lucro ÷ faturamento): o app aplica IRPJ/CSLL sobre essa margem, do mesmo jeito que faz no Presumido, só que sobre o lucro real estimado em vez da presunção fixa. Reveja esse % periodicamente com seu contador, com base no resultado contábil real.
+      </InfoAlert>
+      <SectionLabel>Base do lucro real — margem estimada</SectionLabel>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <NumField label="Margem líquida estimada (%)" value={s.margemLucroReal} step={1} min={0} max={100}
+          onChange={v => set("margemLucroReal", v)} hint="Lucro líquido estimado ÷ faturamento." />
+        <NumField label="Lucro real estimado (R$/mês)" value={parseFloat(lucroRealMensal.toFixed(2))} readOnly
+          hint="Faturamento médio mensal × margem estimada." />
+        <NumField label="ISS (%)" value={s.iss} step={0.5} onChange={v => set("iss", v)} hint="Sincronizado com aba Empresa — não muda com o regime." />
+      </div>
+      <SectionLabel>PIS/COFINS — regime não-cumulativo</SectionLabel>
+      <InfoAlert>
+        No Lucro Real, PIS/COFINS normalmente são não-cumulativos (alíquota maior, mas com direito a créditos sobre insumos). Esta calculadora aplica a <strong>alíquota cheia sobre o faturamento, sem descontar créditos</strong> — uma estimativa conservadora; o valor real tende a ser um pouco menor, dependendo dos créditos apurados.
+      </InfoAlert>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <NumField label="PIS não-cumulativo (%)" value={PIS_REAL_PCT} readOnly hint="Lei 10.637/02, art. 2º — 1,65% sobre o faturamento." />
+        <NumField label="COFINS não-cumulativo (%)" value={COFINS_REAL_PCT} readOnly hint="Lei 10.833/03, art. 2º — 7,60% sobre o faturamento." />
+        <NumField label="PIS + COFINS (%)" value={PIS_REAL_PCT + COFINS_REAL_PCT} readOnly hint="Alíquota cheia, sem créditos de insumos." />
+      </div>
+      <SectionLabel>IRPJ e CSLL — sobre o lucro real estimado</SectionLabel>
+      <InfoAlert>
+        IRPJ efetivo: {fmtP(s.margemLucroReal)}% (margem) × {fmtP(s.aliqIRPJ)}% = <strong>{fmtP(s.margemLucroReal / 100 * s.aliqIRPJ)}</strong>
+        {adicIRPJ() > 0 && <> + adicional 10%: <strong>{fmtP(adicIRPJ())}</strong></>}<br />
+        CSLL efetivo: {fmtP(s.margemLucroReal)}% × {fmtP(s.aliqCSLL)}% = <strong>{fmtP(csll)}</strong>
+      </InfoAlert>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <NumField label="Adicional IRPJ estimado (%)" value={parseFloat(adicIRPJ().toFixed(4))} readOnly hint="10% sobre lucro real > R$ 20.000/mês — Lei 9.249/95 art.3º §1º." />
+        <NumField label="Alíquota IRPJ (%)" value={s.aliqIRPJ} step={1} onChange={v => set("aliqIRPJ", v)} hint="15% — mesma alíquota do Presumido." />
+        <NumField label="Alíquota CSLL (%)" value={s.aliqCSLL} step={1} onChange={v => set("aliqCSLL", v)} hint="9% — mesma alíquota do Presumido." />
+      </div>
+      <SectionLabel>Resumo fiscal — total I para o BDI</SectionLabel>
+      <div className="overflow-x-auto mb-4">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left py-2 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tributo</th>
+              <th className="text-left py-2 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Base legal</th>
+              <th className="text-right py-2 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">% efetivo s/ faturamento</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              { t: "PIS", base: "Lei 10.637/02 — não-cumulativo, sem créditos", v: PIS_REAL_PCT },
+              { t: "COFINS", base: "Lei 10.833/03 — não-cumulativo, sem créditos", v: COFINS_REAL_PCT },
+              { t: "ISS — Xanxerê/SC", base: "LC 116/2003", v: s.iss },
+              { t: `IRPJ${adicIRPJ() > 0 ? " + adicional" : ""}`, base: `Lei 9.249/95 · margem estimada ${fmtP(s.margemLucroReal)}`, v: irpj },
+              { t: "CSLL", base: `Lei 7.689/88 · margem estimada ${fmtP(s.margemLucroReal)}`, v: csll },
+            ].map(row => (
+              <tr key={row.t} className="border-b border-border/50">
+                <td className="py-2 px-3">{row.t}</td>
+                <td className="py-2 px-3 text-muted-foreground text-xs">{row.base}</td>
+                <td className="py-2 px-3 text-right font-medium">{fmtP(row.v)}</td>
+              </tr>
+            ))}
+            <tr className="bg-muted/50 font-bold">
+              <td className="py-2 px-3" colSpan={2}>Total I — denominador do BDI</td>
+              <td className="py-2 px-3 text-right text-teal-600 dark:text-teal-400">{fmtP(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <MetricCard label="PIS+COFINS" value={fmtP(PIS_REAL_PCT + COFINS_REAL_PCT)} />
+        <MetricCard label="ISS" value={fmtP(s.iss)} />
+        <MetricCard label="IRPJ" value={fmtP(irpj)} />
+        <MetricCard label="CSLL" value={fmtP(csll)} />
+        <MetricCard label="Margem estimada" value={fmtP(s.margemLucroReal)} variant="info" />
+        <MetricCard label="Total I (BDI)" value={fmtP(total)} variant="accent" />
+      </div>
+    </div>
+  );
+});
+TabTributarioReal.displayName = "TabTributarioReal";
+
+const TabTributario = memo(() => {
+  const { s, set } = useBDI();
+  return (
+    <div>
+      <SectionLabel>Regime tributário</SectionLabel>
+      <Tabs value={s.regimeTributario} onValueChange={v => set("regimeTributario", v)}>
+        <TabsList className="mb-3">
+          <TabsTrigger value="presumido" className="text-xs">Lucro Presumido</TabsTrigger>
+          <TabsTrigger value="real" className="text-xs">Lucro Real</TabsTrigger>
+        </TabsList>
+        <TabsContent value="presumido" className="mt-0"><TabTributarioPresumido /></TabsContent>
+        <TabsContent value="real" className="mt-0"><TabTributarioReal /></TabsContent>
+      </Tabs>
     </div>
   );
 });
@@ -800,12 +913,16 @@ ProjUnitInput.displayName = "ProjUnitInput";
 
 // =================== ABA MEMÓRIA ===================
 const TabMemoria = memo(() => {
-  const { s, totalAC, pctAC, adicIRPJ, bdiCalc, calcMO } = useBDI();
+  const { s, totalAC, pctAC, adicIRPJ, totalI, bdiCalc, calcMO } = useBDI();
   const dt = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
   const { encGlobal } = calcMO();
-  const irpj = s.presIRPJ / 100 * s.aliqIRPJ + adicIRPJ();
-  const csll = s.presCSLL / 100 * s.aliqCSLL;
-  const totalIval = s.pis + s.cofins + s.iss + irpj + csll;
+  const isReal = s.regimeTributario === "real";
+  const baseIRPJCSLL = isReal ? s.margemLucroReal : s.presIRPJ;
+  const irpj = baseIRPJCSLL / 100 * s.aliqIRPJ + adicIRPJ();
+  const csll = (isReal ? s.margemLucroReal : s.presCSLL) / 100 * s.aliqCSLL;
+  const pisVal = isReal ? PIS_REAL_PCT : s.pis;
+  const cofinsVal = isReal ? COFINS_REAL_PCT : s.cofins;
+  const totalIval = totalI();
   const tipoLabel: Record<string, string> = {
     global: "Empreitada global (fornece material + MO)",
     parcial: "Empreitada parcial / mão de obra",
@@ -836,7 +953,7 @@ const TabMemoria = memo(() => {
                 ["Empresa", "EG — Projetos e Consultoria em Construção Ltda"],
                 ["Responsável técnico", "Eng. Civil Elisandro Antonio Gasparrini — CREA/SC 066.571-0"],
                 ["Data de geração", dt],
-                ["Regime tributário", "Lucro Presumido"],
+                ["Regime tributário", isReal ? `Lucro Real (margem estimada ${fmtP(s.margemLucroReal)})` : "Lucro Presumido"],
                 ["Município / ISS", `Xanxerê/SC — ${fmtP(s.iss)} (LC 116/2003)`],
                 ["Tipo de contrato", tipoLabel[s.tipoObra] ?? s.tipoObra],
                 ["Faturamento médio mensal", fmtR(s.fatMensal)],
@@ -855,11 +972,11 @@ const TabMemoria = memo(() => {
             <thead><tr className="border-b border-border"><th className="text-left py-1.5 text-xs text-muted-foreground">Tributo</th><th className="text-left py-1.5 text-xs text-muted-foreground">Base / referência</th><th className="text-right py-1.5 text-xs text-muted-foreground">% s/ faturamento</th></tr></thead>
             <tbody>
               {[
-                { t: "PIS", base: "Lei 10.637/02 — regime cumulativo", v: s.pis },
-                { t: "COFINS", base: "Lei 10.833/03 — regime cumulativo", v: s.cofins },
+                { t: "PIS", base: isReal ? "Lei 10.637/02 — não-cumulativo, sem créditos" : "Lei 10.637/02 — regime cumulativo", v: pisVal },
+                { t: "COFINS", base: isReal ? "Lei 10.833/03 — não-cumulativo, sem créditos" : "Lei 10.833/03 — regime cumulativo", v: cofinsVal },
                 { t: "ISS", base: "LC 116/2003 — alíquota Xanxerê/SC", v: s.iss },
-                { t: "IRPJ", base: `Presunção ${s.presIRPJ}% × ${s.aliqIRPJ}% — IN RFB 1.700/2017 art.33`, v: irpj },
-                { t: "CSLL", base: `Presunção ${s.presCSLL}% × ${s.aliqCSLL}% — IN RFB 1.700/2017 art.34`, v: csll },
+                { t: "IRPJ", base: isReal ? `Margem estimada ${fmtP(s.margemLucroReal)} × ${s.aliqIRPJ}% — Lei 9.249/95` : `Presunção ${s.presIRPJ}% × ${s.aliqIRPJ}% — IN RFB 1.700/2017 art.33`, v: irpj },
+                { t: "CSLL", base: isReal ? `Margem estimada ${fmtP(s.margemLucroReal)} × ${s.aliqCSLL}% — Lei 7.689/88` : `Presunção ${s.presCSLL}% × ${s.aliqCSLL}% — IN RFB 1.700/2017 art.34`, v: csll },
               ].map(row => (
                 <tr key={row.t} className="border-b border-border/30">
                   <td className="py-1.5">{row.t}</td>
@@ -979,16 +1096,30 @@ export function BDICalculator({ budgetId, onSave }: BDICalculatorProps = {}) {
   }, [s.bdiAC, s.bdiL, s.bdiI, s.bdiR, s.bdiG, budgetId, onSave, lastSavedBDI]);
 
   // =================== CÁLCULOS DERIVADOS ===================
+  // Base do adicional de 10% de IRPJ (Lei 9.249/95 art.3º §1º — lucro acima
+  // de R$ 20.000/mês): no Presumido é a presunção fixa; no Real, a margem
+  // líquida estimada informada pelo usuário na sub-aba Lucro Real.
   const adicIRPJ = useCallback(() => {
-    const lucroPresumido = s.fatMensal * s.presIRPJ / 100;
-    return lucroPresumido > 20000 ? (lucroPresumido - 20000) * 0.10 / s.fatMensal * 100 : 0;
-  }, [s.fatMensal, s.presIRPJ]);
+    const base = s.regimeTributario === "real"
+      ? s.fatMensal * s.margemLucroReal / 100
+      : s.fatMensal * s.presIRPJ / 100;
+    return base > 20000 ? (base - 20000) * 0.10 / s.fatMensal * 100 : 0;
+  }, [s.fatMensal, s.presIRPJ, s.regimeTributario, s.margemLucroReal]);
 
   const totalI = useCallback(() => {
+    if (s.regimeTributario === "real") {
+      // PIS/COFINS não-cumulativos, alíquota cheia sem créditos (opção do
+      // usuário) + IRPJ/CSLL sobre a margem líquida estimada, em vez da
+      // presunção fixa do Lucro Presumido.
+      const irpj = s.margemLucroReal / 100 * s.aliqIRPJ + adicIRPJ();
+      const csll = s.margemLucroReal / 100 * s.aliqCSLL;
+      return PIS_REAL_PCT + COFINS_REAL_PCT + s.iss + irpj + csll;
+    }
     const irpj = s.presIRPJ / 100 * s.aliqIRPJ + adicIRPJ();
     const csll = s.presCSLL / 100 * s.aliqCSLL;
     return s.pis + s.cofins + s.iss + irpj + csll;
-  }, [s.pis, s.cofins, s.iss, s.presIRPJ, s.aliqIRPJ, s.presCSLL, s.aliqCSLL, adicIRPJ]);
+  }, [s.pis, s.cofins, s.iss, s.presIRPJ, s.aliqIRPJ, s.presCSLL, s.aliqCSLL,
+      s.regimeTributario, s.margemLucroReal, adicIRPJ]);
 
   const totalAC = s.acAluguel + s.acSalarios + s.acContador + s.acVeiculo +
                   s.acTi + s.acSeguros + s.acOutros + s.acDeprec;
@@ -1062,7 +1193,7 @@ export function BDICalculator({ budgetId, onSave }: BDICalculatorProps = {}) {
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.fatMensal, s.pis, s.cofins, s.iss, s.presIRPJ, s.presCSLL, s.aliqIRPJ, s.aliqCSLL,
-      totalAC, s.tipoObra, s.tipoRisco]);
+      totalAC, s.tipoObra, s.tipoRisco, s.regimeTributario, s.margemLucroReal]);
 
   const contextValue: BDIContextType = {
     s, set, equipe, setEquipe, projCustos, setProjCustos,
@@ -1077,7 +1208,7 @@ export function BDICalculator({ budgetId, onSave }: BDICalculatorProps = {}) {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h2 className="text-lg font-bold">Calculadora de BDI</h2>
-            <p className="text-xs text-muted-foreground">Fórmula clássica de BDI · Lucro Presumido · CCT Oeste/SC jan/2025</p>
+            <p className="text-xs text-muted-foreground">Fórmula clássica de BDI · {s.regimeTributario === "real" ? "Lucro Real" : "Lucro Presumido"} · CCT Oeste/SC jan/2025</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right">
