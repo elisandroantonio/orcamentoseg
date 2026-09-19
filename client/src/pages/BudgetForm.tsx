@@ -1959,14 +1959,17 @@ export default function BudgetForm() {
                     let totalEquipmentWithoutBDI = 0;
                     let totalServiceWithoutBDI = 0;
                     let totalOtherWithoutBDI = 0;
-                    
+                    let totalEquipmentWithBDI = 0;
+                    let totalServiceWithBDI = 0;
+                    let totalOtherWithBDI = 0;
+
                     // Melhoria 18: Acumuladores para detalhamento do BDI
                     let totalEncargosSociaisValue = 0;
                     let totalLucroValue = 0;
                     let totalImpostosValue = 0;
                     let totalRiscoValue = 0;
                     let totalGarantiaValue = 0;
-                    
+
                     // Expandir compostos: substituir item composto pelos seus filhos
                     const itemsForCard = allItems.flatMap((item: any) => {
                       if (item.type === 'composite') {
@@ -2088,9 +2091,9 @@ export default function BudgetForm() {
                         otherValue={totalOtherWithoutBDI}
                         materialWithBDI={totalMaterialWithBDI}
                         laborWithBDI={totalLaborWithBDI}
-                        equipmentWithBDI={totalEquipmentWithoutBDI}
-                        serviceWithBDI={totalServiceWithoutBDI}
-                        otherWithBDI={totalOtherWithoutBDI}
+                        equipmentWithBDI={totalEquipmentWithBDI}
+                        serviceWithBDI={totalServiceWithBDI}
+                        otherWithBDI={totalOtherWithBDI}
                         squareMeters={Number(watch("squareMeters")) || undefined}
                         encargosSociaisValue={totalEncargosSociaisValue}
                         lucroValue={totalLucroValue}
@@ -3140,14 +3143,17 @@ export default function BudgetForm() {
                     let totalEquipmentWithoutBDI = 0;
                     let totalServiceWithoutBDI = 0;
                     let totalOtherWithoutBDI = 0;
-                    
+                    let totalEquipmentWithBDI = 0;
+                    let totalServiceWithBDI = 0;
+                    let totalOtherWithBDI = 0;
+
                     // Melhoria 18: Acumuladores para detalhamento do BDI
                     let totalEncargosSociaisValue = 0;
                     let totalLucroValue = 0;
                     let totalImpostosValue = 0;
                     let totalRiscoValue = 0;
                     let totalGarantiaValue = 0;
-                    
+
                     // Expandir compostos: substituir item composto pelos seus filhos
                     const itemsForCardBdi = allItems.flatMap((item: any) => {
                       if (item.type === 'composite') {
@@ -3218,13 +3224,16 @@ export default function BudgetForm() {
                       totalEquipmentWithoutBDI += equipment * qty;
                       totalServiceWithoutBDI += service * qty;
                       totalOtherWithoutBDI += other * qty;
-                      
+                      totalEquipmentWithBDI += equipmentWithBDI * qty;
+                      totalServiceWithBDI += serviceWithBDI * qty;
+                      totalOtherWithBDI += otherWithBDI * qty;
+
                       // Melhoria 18: Calcular contribuição de cada componente do BDI
                       // 1. Encargos Sociais (apenas em labor)
                       if (aplicarEncargos) {
                         totalEncargosSociaisValue += (labor * (socialCharges / 100)) * qty;
                       }
-                      
+
                       // 2-5. Lucro, Impostos, Risco, Garantia (sobre base com encargos)
                       // Corrigido: a base agora respeita applyBdiToMaterial/applyBdiToLabor por
                       // item, igual ao que materialWithBDI/laborWithBDI já fazem — antes, o
@@ -3238,7 +3247,7 @@ export default function BudgetForm() {
                       totalRiscoValue += baseValue * (risk / 100);
                       totalGarantiaValue += baseValue * (warranty / 100);
                     });
-                    
+
                     const totalWithBDI = totalMaterialWithBDI + totalLaborWithBDI;
                     const totalWithoutBDI = totalMaterialWithoutBDI + totalLaborWithoutBDI + totalEquipmentWithoutBDI + totalServiceWithoutBDI + totalOtherWithoutBDI;
                     const bdiValue = totalWithBDI - totalWithoutBDI;
@@ -3269,9 +3278,9 @@ export default function BudgetForm() {
                         otherValue={totalOtherWithoutBDI}
                         materialWithBDI={totalMaterialWithBDI}
                         laborWithBDI={totalLaborWithBDI}
-                        equipmentWithBDI={totalEquipmentWithoutBDI}
-                        serviceWithBDI={totalServiceWithoutBDI}
-                        otherWithBDI={totalOtherWithoutBDI}
+                        equipmentWithBDI={totalEquipmentWithBDI}
+                        serviceWithBDI={totalServiceWithBDI}
+                        otherWithBDI={totalOtherWithBDI}
                         squareMeters={Number(watch("squareMeters")) || undefined}
                         encargosSociaisValue={totalEncargosSociaisValue}
                         lucroValue={totalLucroValue}
@@ -3463,11 +3472,13 @@ export default function BudgetForm() {
                       const effectiveMaterialAdjRodape = effectiveMaterial * (1 + matAdjPctRodape / 100);
                       const materialWithBDI = itemConfig.applyBdiToMaterial ? effectiveMaterialAdjRodape * bdiMultiplier : effectiveMaterialAdjRodape;
                       const laborWithBDI = itemConfig.applyBdiToLabor ? laborWithCharges * bdiMultiplier : laborWithCharges;
-                      const laborWithAdj = laborWithBDI * (1 + laborAdjPct / 100);
                       const equipmentWithBDI = equipment * bdiMultiplier;
                       const serviceWithBDI = service * bdiMultiplier;
                       const otherWithBDI = other * bdiMultiplier;
-                      const totalLaborItem = laborWithAdj + equipmentWithBDI + serviceWithBDI + otherWithBDI;
+                      // Ajuste M.O. (%) aplicado ao balde inteiro (M.O. + equip. + serviço +
+                      // outros), como em todo o resto do arquivo — antes incidia só sobre
+                      // laborWithBDI, deixando equipment/service/other de fora do ajuste.
+                      const totalLaborItem = (laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI) * (1 + laborAdjPct / 100);
                       sumMat += materialWithBDI * qty;
                       sumLab += totalLaborItem * qty;
                     });

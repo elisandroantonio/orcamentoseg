@@ -686,21 +686,24 @@ function AdditiveMeasurementTab({
     const qty = Number(item.quantity || 1);
     const rawMaterial = Number(item.materialCost || 0);
     const materialBase = Number(item.includeMaterial ?? 1) ? rawMaterial : 0;
-    const laborBase = Number(item.laborCost || 0)
-      + Number(item.equipmentCost || 0)
+    const rawLabor = Number(item.laborCost || 0);
+    const nonLaborBase = Number(item.equipmentCost || 0)
       + Number(item.serviceCost || 0)
       + Number(item.otherCost || 0);
     const matAdjMultiplier = 1 + (Number(item.materialAdjustment) || 0) / 100;
     const labAdjMultiplier = 1 + (Number(item.laborAdjustment) || 0) / 100;
     const material = materialBase * matAdjMultiplier;
-    const labor = laborBase * labAdjMultiplier;
     const applyBdiToMaterial = Number(item.applyBdiToMaterial ?? 1);
     const applyBdiToLabor = Number(item.applyBdiToLabor ?? 1);
     const aplicarEncargos = Number(item.aplicarEncargosSociais ?? 1);
-    const laborWithCharges = labor * (1 + (aplicarEncargos ? budgetParams.socialCharges : 0) / 100);
+    // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor) —
+    // mesma regra do orçamento normal. Equipamento/serviço/outros continuam no
+    // mesmo balde de M.O. (recebem laborAdjustment junto), só não recebem encargos.
+    const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? budgetParams.socialCharges : 0) / 100)) + nonLaborBase;
+    const labor = laborWithCharges * labAdjMultiplier;
     const bdiMult = calcBDIMultiplier();
     const matFinal = applyBdiToMaterial ? material * bdiMult : material;
-    const labFinal = applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges;
+    const labFinal = applyBdiToLabor ? labor * bdiMult : labor;
     // Compat: incremento/desconto legado (pré-migração), fica neutro (1) se o
     // item nunca teve esses campos preenchidos.
     const combinedMultiplier = (1 + (Number(item.additionalIncrement) || 0) / 100) * (1 - (Number(item.discount) || 0) / 100);
@@ -1449,22 +1452,23 @@ export function BudgetFinanceiro({
         const calcAddItemTotal = (item: any): number => {
           const qty = Number(item.quantity || 1);
           const materialBase = Number(item.includeMaterial ?? 1) ? Number(item.materialCost || item.materialcost || 0) : 0;
-          const laborBase = Number(item.laborCost || item.laborcost || 0)
-            + Number(item.equipmentCost || item.equipmentcost || 0)
+          const rawLabor = Number(item.laborCost || item.laborcost || 0);
+          const nonLaborBase = Number(item.equipmentCost || item.equipmentcost || 0)
             + Number(item.serviceCost || item.servicecost || 0)
             + Number(item.otherCost || item.othercost || 0);
           const matAdjMultiplier = 1 + (Number(item.materialAdjustment ?? item.materialadjustment) || 0) / 100;
           const labAdjMultiplier = 1 + (Number(item.laborAdjustment ?? item.laboradjustment) || 0) / 100;
           const material = materialBase * matAdjMultiplier;
-          const labor = laborBase * labAdjMultiplier;
           const applyBdiMat = Number(item.applyBdiToMaterial ?? item.applybditomaterial ?? 1);
           const applyBdiLab = Number(item.applyBdiToLabor ?? item.applybditolabor ?? 1);
           const aplicarEnc = Number(item.aplicarEncargosSociais ?? item.aplicarencargossociais ?? 1);
           const addInc = Number(item.additionalIncrement || item.additionalincrement || 0);
           const disc = Number(item.discount || 0);
-          const laborWithCharges = labor * (1 + (aplicarEnc ? sc : 0) / 100);
+          // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor).
+          const laborWithCharges = (rawLabor * (1 + (aplicarEnc ? sc : 0) / 100)) + nonLaborBase;
+          const labor = laborWithCharges * labAdjMultiplier;
           const matFinal = applyBdiMat ? material * additiveBdiRatio : material;
-          const labFinal = applyBdiLab ? laborWithCharges * additiveBdiRatio : laborWithCharges;
+          const labFinal = applyBdiLab ? labor * additiveBdiRatio : labor;
           const combinedMultiplier = (1 + addInc / 100) * (1 - disc / 100);
           return (matFinal + labFinal) * combinedMultiplier * qty;
         };

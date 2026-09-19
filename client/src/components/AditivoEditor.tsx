@@ -41,22 +41,27 @@ function calcItemBdiBreakdown(item: any, bdiMultiplier: number, socialCharges: n
   // Respeitar flag includeMaterial por item (0 = material por conta do cliente)
   const rawMaterial = item.materialCost || 0;
   const materialBase = Number(item.includeMaterial) === 0 ? 0 : rawMaterial;
-  const laborBase = (item.laborCost || 0) + (item.equipmentCost || 0) + (item.serviceCost || 0) + (item.otherCost || 0);
+  const rawLabor = item.laborCost || 0;
+  const nonLaborBase = (item.equipmentCost || 0) + (item.serviceCost || 0) + (item.otherCost || 0);
   // Ajuste de Material e M.O. (equalização) — mesmo conceito da aba Comp. BDI,
   // aplicado antes do multiplicador de BDI.
   const matAdjMultiplier = 1 + (item.materialAdjustment || 0) / 100;
   const labAdjMultiplier = 1 + (item.laborAdjustment || 0) / 100;
   const material = materialBase * matAdjMultiplier;
-  const labor = laborBase * labAdjMultiplier;
   const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
-  const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
+  // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor) —
+  // mesma regra do orçamento normal. Equipamento/serviço/outros entram no
+  // "balde" de M.O. do aditivo (recebem o ajuste de M.O. junto), mas não
+  // recebem encargos sociais.
+  const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase;
+  const labor = laborWithCharges * labAdjMultiplier;
   const applyMat = Number(item.applyBdiToMaterial) !== 0;
   const applyLab = Number(item.applyBdiToLabor) !== 0;
   // Compat: mantém incremento/desconto legado, caso existam valores antigos
   const increment = 1 + (item.additionalIncrement || 0) / 100;
   const discount = 1 - (item.discount || 0) / 100;
   const matFinal = applyMat ? material * bdiMultiplier : material;
-  const labFinal = applyLab ? laborWithCharges * bdiMultiplier : laborWithCharges;
+  const labFinal = applyLab ? labor * bdiMultiplier : labor;
   const qty = item.quantity || 1;
   const factor = increment * discount * qty;
   return {

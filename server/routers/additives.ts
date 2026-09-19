@@ -73,26 +73,31 @@ async function recalcAdditiveTotals(additiveId: number) {
     const rawMaterial = parseFloat(item.materialcost || "0");
     // Respeitar flag includematerial (0 = material por conta do cliente)
     const materialBase = Number(item.includematerial) === 0 ? 0 : rawMaterial;
-    const laborBase = parseFloat(item.laborcost || "0")
-                + parseFloat(item.equipmentcost || "0")
+    const rawLabor = parseFloat(item.laborcost || "0");
+    const nonLaborBase = parseFloat(item.equipmentcost || "0")
                 + parseFloat(item.servicecost || "0")
                 + parseFloat(item.othercost || "0");
+    const laborBase = rawLabor + nonLaborBase;
     // totalNoBdi respeita includeMaterial: exclui material se desabilitado
     totalNoBdi += (materialBase + laborBase) * qty;
     // Ajuste de Material e M.O. (equalização) — mesmo conceito da aba Comp. BDI
     const matAdjMultiplier = 1 + parseFloat(item.materialadjustment || "0") / 100;
     const labAdjMultiplier = 1 + parseFloat(item.laboradjustment || "0") / 100;
     const material = materialBase * matAdjMultiplier;
-    const labor = laborBase * labAdjMultiplier;
     const aplicarEncargos = Number(item.aplicarencargossociais) !== 0;
-    const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
+    // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor) —
+    // mesma regra do orçamento normal. Antes incidiam sobre laborBase inteiro
+    // (mão de obra + equipamento + serviço + outros), inflando encargos sobre
+    // custos que não são mão de obra.
+    const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase;
+    const labor = laborWithCharges * labAdjMultiplier;
     const applyMat = Number(item.applybditomaterial) !== 0;
     const applyLab = Number(item.applybditolabor) !== 0;
     // Compat: mantém incremento/desconto legado, caso existam valores antigos
     const increment = 1 + parseFloat(item.additionalincrement || "0") / 100;
     const discount = 1 - parseFloat(item.discount || "0") / 100;
     const matFinal = applyMat ? material * bdiMultiplier : material;
-    const labFinal = applyLab ? laborWithCharges * bdiMultiplier : laborWithCharges;
+    const labFinal = applyLab ? labor * bdiMultiplier : labor;
     totalWithBdi += (matFinal + labFinal) * increment * discount * qty;
   }
   

@@ -192,8 +192,8 @@ export function AditivosTab({
       const applyBdiToAdditiveItem = (item: any) => {
         const rawMaterial = Number(item.materialCost) || 0;
         const materialBase = Number(item.includeMaterial) === 0 ? 0 : rawMaterial;
-        const laborBase =
-          (Number(item.laborCost) || 0) +
+        const rawLabor = Number(item.laborCost) || 0;
+        const nonLaborBase =
           (Number(item.equipmentCost) || 0) +
           (Number(item.serviceCost) || 0) +
           (Number(item.otherCost) || 0);
@@ -201,16 +201,18 @@ export function AditivosTab({
         const matAdjMultiplier = 1 + (Number(item.materialAdjustment) || 0) / 100;
         const labAdjMultiplier = 1 + (Number(item.laborAdjustment) || 0) / 100;
         const material = materialBase * matAdjMultiplier;
-        const labor = laborBase * labAdjMultiplier;
         const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
-        const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
+        // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor) —
+        // mesma regra do orçamento normal.
+        const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase;
+        const labor = laborWithCharges * labAdjMultiplier;
         const applyMat = Number(item.applyBdiToMaterial) !== 0;
         const applyLab = Number(item.applyBdiToLabor) !== 0;
         // Compat: mantém incremento/desconto legado, caso existam valores antigos
         const combinedMultiplier =
           (1 + (Number(item.additionalIncrement) || 0) / 100) * (1 - (Number(item.discount) || 0) / 100);
         const matFinal = (applyMat ? material * bdiMultiplier : material) * combinedMultiplier;
-        const labFinal = (applyLab ? laborWithCharges * bdiMultiplier : laborWithCharges) * combinedMultiplier;
+        const labFinal = (applyLab ? labor * bdiMultiplier : labor) * combinedMultiplier;
         return { materialCost: matFinal, laborCost: labFinal };
       };
 
