@@ -6,6 +6,8 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerDevAuthRoute } from "./devAuth";
 import { registerStorageProxy } from "./storageProxy";
+import { registerClientAuthRoutes } from "./clientAuth";
+import { registerSiteDiaryPhotoRoute } from "./diaryPhotoRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -139,6 +141,67 @@ async function runSafeMigrations() {
     )`);
     console.log('[Migration] material_merge_rules table ensured');
 
+    // Diário de Obras — vínculo formal projeto→cliente (hoje projects.client
+    // é texto livre; clientId é o que permite o portal do cliente saber
+    // quais projetos ele pode ver).
+    await rawQuery(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS clientId INT NULL`);
+    console.log('[Migration] clientId column ensured in projects table');
+
+    // Diário de Obras — login próprio do cliente (ver server/_core/clientAuth.ts)
+    await rawQuery(`CREATE TABLE IF NOT EXISTS client_users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      clientId INT NOT NULL,
+      email VARCHAR(320) NOT NULL,
+      passwordHash VARCHAR(255) NOT NULL,
+      name VARCHAR(255),
+      isActive TINYINT NOT NULL DEFAULT 1,
+      lastSignedIn TIMESTAMP NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      updatedAt TIMESTAMP NOT NULL DEFAULT NOW() ON UPDATE NOW(),
+      UNIQUE KEY client_users_email_uq (email),
+      INDEX client_users_clientId_idx (clientId)
+    )`);
+    console.log('[Migration] client_users table ensured');
+
+    // Diário de Obras — entradas por dia, efetivo de M.O. por função e fotos
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_entries (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      projectId INT NOT NULL,
+      userId INT NOT NULL,
+      budgetStageId INT NULL,
+      entryDate DATE NOT NULL,
+      weatherMorning VARCHAR(20),
+      weatherAfternoon VARCHAR(20),
+      equipmentUsed TEXT,
+      activities TEXT NOT NULL,
+      occurrences TEXT,
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      updatedAt TIMESTAMP NOT NULL DEFAULT NOW() ON UPDATE NOW(),
+      INDEX site_diary_entries_projectId_idx (projectId),
+      INDEX site_diary_entries_budgetStageId_idx (budgetStageId),
+      INDEX site_diary_entries_entryDate_idx (entryDate)
+    )`);
+    console.log('[Migration] site_diary_entries table ensured');
+
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_labor_entries (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      diaryEntryId INT NOT NULL,
+      role VARCHAR(100) NOT NULL,
+      count INT NOT NULL DEFAULT 0,
+      INDEX site_diary_labor_entries_diaryEntryId_idx (diaryEntryId)
+    )`);
+    console.log('[Migration] site_diary_labor_entries table ensured');
+
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_photos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      diaryEntryId INT NOT NULL,
+      fileName VARCHAR(255) NOT NULL,
+      caption VARCHAR(255),
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      INDEX site_diary_photos_diaryEntryId_idx (diaryEntryId)
+    )`);
+    console.log('[Migration] site_diary_photos table ensured');
+
   } catch (err: any) {
     console.warn('[Migration] Safe migration warning:', err?.message || err);
   }
@@ -157,6 +220,11 @@ async function startServer() {
   registerOAuthRoutes(app);
   // Local-only login bypass (no-op in production) — see devAuth.ts
   registerDevAuthRoute(app);
+  // Login próprio do portal do cliente (Diário de Obras) — ver clientAuth.ts
+  registerClientAuthRoutes(app);
+  // Serve as fotos do Diário de Obras com checagem de permissão (equipe
+  // interna dono do projeto, ou cliente com acesso àquele projeto)
+  registerSiteDiaryPhotoRoute(app);
   // tRPC API
   app.use(
     "/api/trpc",

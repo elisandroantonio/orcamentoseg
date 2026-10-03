@@ -10,6 +10,8 @@ import { additivesRouter } from "./routers/additives";
 import { materialListsRouter } from "./routers/materialLists";
 import { cubScRouter } from "./routers/cubSc";
 import { materialMergeRulesRouter } from "./routers/materialMergeRules";
+import { siteDiaryRouter, clientPortalRouter } from "./routers/siteDiary";
+import { clientPortalAdminRouter } from "./routers/clientPortalAdmin";
 import { buildHistoricalRates, generateScheduleDraft, type StageInput } from "./lib/scheduleEngine";
 import {
   inputs, compositions, compositionInputs, projects, budgets, budgetItems, budgetItemInputs,
@@ -26,6 +28,9 @@ export const appRouter = router({
   materialLists: materialListsRouter,
   cubSc: cubScRouter,
   materialMergeRules: materialMergeRulesRouter,
+  siteDiary: siteDiaryRouter,
+  clientLogins: clientPortalAdminRouter,
+  clientPortal: clientPortalRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -566,6 +571,7 @@ export const appRouter = router({
       .input(z.object({
         name: z.string().min(1),
         client: z.string().optional(),
+        clientId: z.number().nullable().optional(), // vínculo formal (Diário de Obras: portal do cliente)
         location: z.string().optional(),
         description: z.string().optional(),
         startDate: z.string().optional(),
@@ -575,7 +581,7 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const database = await getDb();
         if (!database) throw new Error("Database not available");
-        
+
         const [result] = await database.insert(projects).values({
           userId: ctx.user.id,
           ...input,
@@ -584,12 +590,13 @@ export const appRouter = router({
         });
         return { id: Number(result.insertId) };
       }),
-    
+
     update: protectedProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().min(1),
         client: z.string().optional(),
+        clientId: z.number().nullable().optional(),
         location: z.string().optional(),
         description: z.string().optional(),
         startDate: z.string().optional(),

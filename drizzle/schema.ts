@@ -134,7 +134,8 @@ export const projects = mysqlTable("projects", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 255 }).notNull(),
-  client: varchar("client", { length: 255 }),
+  client: varchar("client", { length: 255 }), // legado: nome do cliente em texto livre
+  clientId: int("clientId").references(() => clients.id, { onDelete: "set null" }), // vínculo formal (Diário de Obras: portal do cliente)
   location: text("location"),
   description: text("description"),
   startDate: date("startDate"),
@@ -144,6 +145,7 @@ export const projects = mysqlTable("projects", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
   userIdIdx: index("projects_userId_idx").on(table.userId),
+  clientIdIdx: index("projects_clientId_idx").on(table.clientId),
 }));
 
 export type Project = typeof projects.$inferSelect;
@@ -925,3 +927,84 @@ export const materialMergeRules = mysqlTable("material_merge_rules", {
 }));
 export type MaterialMergeRule = typeof materialMergeRules.$inferSelect;
 export type InsertMaterialMergeRule = typeof materialMergeRules.$inferInsert;
+
+/**
+ * Diário de Obras - usuários de clientes (login próprio, somente leitura).
+ * Separado de `users` (equipe interna) de propósito: cliente nunca deve
+ * aparecer como dono de orçamento/composição, só visualizar o diário dos
+ * projetos vinculados ao seu clientId.
+ */
+export const clientUsers = mysqlTable("client_users", {
+  id: int("id").autoincrement().primaryKey(),
+  clientId: int("clientId").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  isActive: tinyint("isActive").notNull().default(1),
+  lastSignedIn: timestamp("lastSignedIn"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  clientIdIdx: index("client_users_clientId_idx").on(table.clientId),
+}));
+export type ClientUserRow = typeof clientUsers.$inferSelect;
+export type InsertClientUser = typeof clientUsers.$inferInsert;
+
+/**
+ * Diário de Obras - uma entrada por dia (ou mais de uma) de um projeto.
+ * budgetStageId é opcional: permite filtrar/consultar depois "tudo que foi
+ * registrado na etapa Fundação", mas não é obrigatório porque o projeto
+ * pode ter mais de um orçamento ou nenhuma etapa configurada ainda.
+ */
+export const siteDiaryEntries = mysqlTable("site_diary_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }), // quem registrou (equipe interna)
+  budgetStageId: int("budgetStageId").references(() => budgetStages.id, { onDelete: "set null" }), // etapa do cronograma (opcional)
+  entryDate: date("entryDate").notNull(),
+  weatherMorning: mysqlEnum("weatherMorning", ["bom", "chuva", "nublado", "impraticavel"]),
+  weatherAfternoon: mysqlEnum("weatherAfternoon", ["bom", "chuva", "nublado", "impraticavel"]),
+  equipmentUsed: text("equipmentUsed"),
+  activities: text("activities").notNull(),
+  occurrences: text("occurrences"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  projectIdIdx: index("site_diary_entries_projectId_idx").on(table.projectId),
+  budgetStageIdIdx: index("site_diary_entries_budgetStageId_idx").on(table.budgetStageId),
+  entryDateIdx: index("site_diary_entries_entryDate_idx").on(table.entryDate),
+}));
+export type SiteDiaryEntry = typeof siteDiaryEntries.$inferSelect;
+export type InsertSiteDiaryEntry = typeof siteDiaryEntries.$inferInsert;
+
+/**
+ * Diário de Obras - efetivo de mão de obra por função, dentro de uma entrada
+ * (ex: Pedreiro: 4, Servente: 6). Uma linha por função.
+ */
+export const siteDiaryLaborEntries = mysqlTable("site_diary_labor_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  diaryEntryId: int("diaryEntryId").notNull().references(() => siteDiaryEntries.id, { onDelete: "cascade" }),
+  role: varchar("role", { length: 100 }).notNull(),
+  count: int("count").notNull().default(0),
+}, (table) => ({
+  diaryEntryIdIdx: index("site_diary_labor_entries_diaryEntryId_idx").on(table.diaryEntryId),
+}));
+export type SiteDiaryLaborEntry = typeof siteDiaryLaborEntries.$inferSelect;
+export type InsertSiteDiaryLaborEntry = typeof siteDiaryLaborEntries.$inferInsert;
+
+/**
+ * Diário de Obras - fotos anexadas a uma entrada. `fileName` é o nome do
+ * arquivo gravado no volume persistente (UPLOAD_DIR), não o conteúdo —
+ * ver server/_core/diaryStorage.ts.
+ */
+export const siteDiaryPhotos = mysqlTable("site_diary_photos", {
+  id: int("id").autoincrement().primaryKey(),
+  diaryEntryId: int("diaryEntryId").notNull().references(() => siteDiaryEntries.id, { onDelete: "cascade" }),
+  fileName: varchar("fileName", { length: 255 }).notNull(),
+  caption: varchar("caption", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  diaryEntryIdIdx: index("site_diary_photos_diaryEntryId_idx").on(table.diaryEntryId),
+}));
+export type SiteDiaryPhoto = typeof siteDiaryPhotos.$inferSelect;
+export type InsertSiteDiaryPhoto = typeof siteDiaryPhotos.$inferInsert;

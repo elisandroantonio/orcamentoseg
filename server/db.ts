@@ -1445,3 +1445,51 @@ export async function unfreezeBudget(budgetId: number, userId: number): Promise<
 
   return { success: true };
 }
+
+// ─── Diário de Obras: login do cliente (client_users) ──────────────────────
+
+export type ClientUserRecord = {
+  id: number;
+  clientId: number;
+  email: string;
+  passwordHash: string;
+  name: string | null;
+  isActive: number;
+  lastSignedIn: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export async function getClientUserByEmail(email: string): Promise<ClientUserRecord | undefined> {
+  const rows = await rawQuery(`SELECT * FROM client_users WHERE email = ? LIMIT 1`, [email]);
+  return rows[0] as ClientUserRecord | undefined;
+}
+
+export async function getClientUserById(id: number): Promise<ClientUserRecord | undefined> {
+  const rows = await rawQuery(`SELECT * FROM client_users WHERE id = ? LIMIT 1`, [id]);
+  return rows[0] as ClientUserRecord | undefined;
+}
+
+export async function listClientUsersByClientId(clientId: number): Promise<ClientUserRecord[]> {
+  return rawQuery(`SELECT * FROM client_users WHERE clientId = ? ORDER BY createdAt DESC`, [clientId]) as Promise<ClientUserRecord[]>;
+}
+
+export async function createClientUser(params: { clientId: number; email: string; passwordHash: string; name?: string | null }): Promise<number> {
+  const result: any = await rawQuery(
+    `INSERT INTO client_users (clientId, email, passwordHash, name) VALUES (?, ?, ?, ?)`,
+    [params.clientId, params.email, params.passwordHash, params.name ?? null]
+  );
+  return result.insertId;
+}
+
+export async function updateClientUserPassword(id: number, passwordHash: string): Promise<void> {
+  await rawQuery(`UPDATE client_users SET passwordHash = ? WHERE id = ?`, [passwordHash, id]);
+}
+
+export async function setClientUserActive(id: number, isActive: boolean): Promise<void> {
+  await rawQuery(`UPDATE client_users SET isActive = ? WHERE id = ?`, [isActive ? 1 : 0, id]);
+}
+
+export async function touchClientUserLastSignedIn(id: number): Promise<void> {
+  await rawQuery(`UPDATE client_users SET lastSignedIn = NOW() WHERE id = ?`, [id]);
+}

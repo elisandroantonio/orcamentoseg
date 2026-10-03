@@ -13,6 +13,10 @@ const Categories = lazy(() => import("./pages/Categories"));
 const Clients = lazy(() => import("./pages/Clients"));
 const Projects = lazy(() => import("./pages/Projects"));
 const ProjectForm = lazy(() => import("./pages/ProjectForm"));
+const SiteDiary = lazy(() => import("./pages/SiteDiary"));
+const ClientPortalLogin = lazy(() => import("./pages/ClientPortalLogin"));
+const ClientPortalProjects = lazy(() => import("./pages/ClientPortalProjects"));
+const ClientPortalDiary = lazy(() => import("./pages/ClientPortalDiary"));
 const Budgets = lazy(() => import("./pages/Budgets"));
 const BudgetForm = lazy(() => import("./pages/BudgetForm"));
 const BudgetView = lazy(() => import("./pages/BudgetView"));
@@ -47,6 +51,10 @@ function Router() {
         <Route path={"/projects"} component={Projects} />
         <Route path={"/projects/new"} component={ProjectForm} />
         <Route path={"/projects/:id"} component={ProjectForm} />
+        <Route path={"/projects/:id/diario"} component={SiteDiary} />
+        <Route path={"/portal/login"} component={ClientPortalLogin} />
+        <Route path={"/portal"} component={ClientPortalProjects} />
+        <Route path={"/portal/:projectId"} component={ClientPortalDiary} />
         <Route path={"/budgets"} component={Budgets} />
         <Route path={"/budgets/new"} component={BudgetForm} />
         <Route path={"/budgets/:id"} component={BudgetDashboard} />

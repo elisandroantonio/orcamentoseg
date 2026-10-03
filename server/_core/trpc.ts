@@ -1,4 +1,4 @@
-import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { CLIENT_UNAUTHED_ERR_MSG, NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -26,6 +26,25 @@ const requireUser = t.middleware(async opts => {
 });
 
 export const protectedProcedure = t.procedure.use(requireUser);
+
+// Portal do cliente (Diário de Obras, somente leitura) — sessão própria via
+// client_users (clientAuth.ts), nunca aceita a sessão da equipe interna.
+const requireClientUser = t.middleware(async opts => {
+  const { ctx, next } = opts;
+
+  if (!ctx.clientUser) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: CLIENT_UNAUTHED_ERR_MSG });
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      clientUser: ctx.clientUser,
+    },
+  });
+});
+
+export const clientProcedure = t.procedure.use(requireClientUser);
 
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
