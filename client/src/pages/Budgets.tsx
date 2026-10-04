@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import { Plus, Eye, Pencil, Trash2, Copy, ChevronRight, ChevronDown, FolderOpen, Lock } from "lucide-react";
+import { Plus, Eye, Pencil, Trash2, Copy, ChevronRight, ChevronDown, FolderOpen, Lock, BookOpen } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { useState, useMemo } from "react";
@@ -256,6 +256,27 @@ export default function Budgets() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {budget.project?.id ? (
+                                <Link href={`/projects/${budget.project.id}/diario`}>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Abrir Diário de Obras"
+                                    className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                  >
+                                    <BookOpen className="h-4 w-4" />
+                                  </Button>
+                                </Link>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                  title="Vincule este orçamento a um projeto para usar o Diário de Obras"
+                                >
+                                  <BookOpen className="h-4 w-4" />
+                                </Button>
+                              )}
                               <Link href={`/budgets/${budget.id}`}>
                                 <Button variant="ghost" size="sm" title="Ver resumo">
                                   <Eye className="h-4 w-4" />
