@@ -17,6 +17,8 @@ const SiteDiary = lazy(() => import("./pages/SiteDiary"));
 const ClientPortalLogin = lazy(() => import("./pages/ClientPortalLogin"));
 const ClientPortalProjects = lazy(() => import("./pages/ClientPortalProjects"));
 const ClientPortalDiary = lazy(() => import("./pages/ClientPortalDiary"));
+const FieldDiaryLogin = lazy(() => import("./pages/FieldDiaryLogin"));
+const FieldDiary = lazy(() => import("./pages/FieldDiary"));
 const Budgets = lazy(() => import("./pages/Budgets"));
 const BudgetForm = lazy(() => import("./pages/BudgetForm"));
 const BudgetView = lazy(() => import("./pages/BudgetView"));
@@ -55,6 +57,8 @@ function Router() {
         <Route path={"/portal/login"} component={ClientPortalLogin} />
         <Route path={"/portal"} component={ClientPortalProjects} />
         <Route path={"/portal/:projectId"} component={ClientPortalDiary} />
+        <Route path={"/campo/login"} component={FieldDiaryLogin} />
+        <Route path={"/campo"} component={FieldDiary} />
         <Route path={"/budgets"} component={Budgets} />
         <Route path={"/budgets/new"} component={BudgetForm} />
         <Route path={"/budgets/:id"} component={BudgetDashboard} />

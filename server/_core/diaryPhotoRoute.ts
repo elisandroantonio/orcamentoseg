@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { readDiaryPhoto } from "./diaryStorage";
 import { authenticateClientRequest } from "./clientAuth";
+import { authenticateFieldRequest } from "./fieldAuth";
 import { sdk } from "./sdk";
 import { rawQuery } from "../db";
 
@@ -49,6 +50,14 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
       if (!authorized) {
         const clientUser = await authenticateClientRequest(req);
         if (clientUser && row.projectClientId && clientUser.clientId === row.projectClientId) {
+          authorized = true;
+        }
+      }
+
+      if (!authorized) {
+        // Login de campo: só vê fotos da própria obra.
+        const fieldUser = await authenticateFieldRequest(req);
+        if (fieldUser && fieldUser.projectId === row.projectId) {
           authorized = true;
         }
       }

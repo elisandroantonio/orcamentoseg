@@ -1,4 +1,4 @@
-import { CLIENT_UNAUTHED_ERR_MSG, NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { CLIENT_UNAUTHED_ERR_MSG, FIELD_UNAUTHED_ERR_MSG, NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -45,6 +45,25 @@ const requireClientUser = t.middleware(async opts => {
 });
 
 export const clientProcedure = t.procedure.use(requireClientUser);
+
+// Login de campo (só alimenta o Diário de Obras da própria obra) — sessão
+// própria via site_diary_field_users (fieldAuth.ts).
+const requireFieldUser = t.middleware(async opts => {
+  const { ctx, next } = opts;
+
+  if (!ctx.fieldUser) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: FIELD_UNAUTHED_ERR_MSG });
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      fieldUser: ctx.fieldUser,
+    },
+  });
+});
+
+export const fieldProcedure = t.procedure.use(requireFieldUser);
 
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {

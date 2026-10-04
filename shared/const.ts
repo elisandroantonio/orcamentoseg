@@ -10,3 +10,8 @@ export const NOT_ADMIN_ERR_MSG = 'You do not have required permission (10002)';
 export const CLIENT_COOKIE_NAME = "client_session_id";
 export const THIRTY_DAYS_MS = 1000 * 60 * 60 * 24 * 30;
 export const CLIENT_UNAUTHED_ERR_MSG = 'Faça login para continuar (20001)';
+
+// Login de campo (mestre/encarregado) — acesso por obra, só pra alimentar o
+// Diário de Obras. Cookie e JWT próprios, separados da equipe e do cliente.
+export const FIELD_COOKIE_NAME = "field_session_id";
+export const FIELD_UNAUTHED_ERR_MSG = 'Faça login para continuar (30001)';

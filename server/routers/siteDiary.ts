@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, clientProcedure, router } from "../_core/trpc";
+import { protectedProcedure, clientProcedure, fieldProcedure, router } from "../_core/trpc";
 import { rawQuery } from "../db";
 import { saveDiaryPhoto, deleteDiaryPhoto } from "../_core/diaryStorage";
 
@@ -43,9 +43,10 @@ async function assertEntryOwner(entryId: number, userId: number) {
 async function loadEntriesWithDetails(entryIds: number[]) {
   if (!entryIds.length) return [];
   const entries = await rawQuery(
-    `SELECT sde.*, u.name as userName, bs.name as stageName
+    `SELECT sde.*, COALESCE(NULLIF(fu.name, ''), fu.email, u.name) as userName, bs.name as stageName
      FROM site_diary_entries sde
      LEFT JOIN users u ON u.id = sde.userId
+     LEFT JOIN site_diary_field_users fu ON fu.id = sde.fieldUserId
      LEFT JOIN budget_stages bs ON bs.id = sde.budgetStageId
      WHERE sde.id IN (${entryIds.map(() => "?").join(",")})
      ORDER BY sde.entryDate DESC, sde.createdAt DESC`,
@@ -67,6 +68,68 @@ async function loadEntriesWithDetails(entryIds: number[]) {
       .filter((p: any) => p.diaryEntryId === entry.id)
       .map((p: any) => ({ ...p, url: `/api/site-diary/photos/${p.fileName}` })),
   }));
+}
+
+/**
+ * Cria a entrada + efetivo + fotos. Usado tanto pela equipe interna quanto
+ * pelo login de campo (quem chama é responsável por checar a permissão no
+ * projeto ANTES de chamar). Pra login de campo, authorUserId é o dono do
+ * projeto (coluna userId é NOT NULL) e fieldUserId identifica quem lançou.
+ */
+async function createEntryCore(
+  input: z.infer<typeof createEntrySchema>,
+  author: { authorUserId: number; fieldUserId: number | null }
+) {
+  if (input.budgetStageId) {
+    const stageRows = await rawQuery(
+      `SELECT bs.id FROM budget_stages bs JOIN budgets b ON b.id = bs.budgetId WHERE bs.id = ? AND b.projectId = ? LIMIT 1`,
+      [input.budgetStageId, input.projectId]
+    );
+    if (!stageRows.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este projeto" });
+    }
+  }
+
+  const result: any = await rawQuery(
+    `INSERT INTO site_diary_entries
+      (projectId, userId, fieldUserId, budgetStageId, entryDate, weatherMorning, weatherAfternoon, equipmentUsed, activities, occurrences)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      input.projectId,
+      author.authorUserId,
+      author.fieldUserId,
+      input.budgetStageId ?? null,
+      input.entryDate,
+      input.weatherMorning ?? null,
+      input.weatherAfternoon ?? null,
+      input.equipmentUsed ?? null,
+      input.activities,
+      input.occurrences ?? null,
+    ]
+  );
+  const entryId = result.insertId;
+
+  for (const l of input.labor) {
+    if (l.count <= 0) continue;
+    await rawQuery(`INSERT INTO site_diary_labor_entries (diaryEntryId, role, count) VALUES (?, ?, ?)`, [
+      entryId,
+      l.role,
+      l.count,
+    ]);
+  }
+
+  for (const photoDataUrl of input.photos) {
+    try {
+      const fileName = await saveDiaryPhoto(photoDataUrl);
+      await rawQuery(`INSERT INTO site_diary_photos (diaryEntryId, fileName) VALUES (?, ?)`, [entryId, fileName]);
+    } catch (error: any) {
+      console.error("[SiteDiary] Falha ao salvar foto", error);
+      throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Falha ao salvar foto" });
+    }
+  }
+
+  const [entry] = await loadEntriesWithDetails([entryId]);
+  return entry;
 }
 
 export const siteDiaryRouter = router({
@@ -100,56 +163,7 @@ export const siteDiaryRouter = router({
     .input(createEntrySchema)
     .mutation(async ({ ctx, input }) => {
       await assertProjectOwner(input.projectId, ctx.user.id);
-
-      if (input.budgetStageId) {
-        const stageRows = await rawQuery(
-          `SELECT bs.id FROM budget_stages bs JOIN budgets b ON b.id = bs.budgetId WHERE bs.id = ? AND b.projectId = ? LIMIT 1`,
-          [input.budgetStageId, input.projectId]
-        );
-        if (!stageRows.length) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este projeto" });
-        }
-      }
-
-      const result: any = await rawQuery(
-        `INSERT INTO site_diary_entries
-          (projectId, userId, budgetStageId, entryDate, weatherMorning, weatherAfternoon, equipmentUsed, activities, occurrences)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          input.projectId,
-          ctx.user.id,
-          input.budgetStageId ?? null,
-          input.entryDate,
-          input.weatherMorning ?? null,
-          input.weatherAfternoon ?? null,
-          input.equipmentUsed ?? null,
-          input.activities,
-          input.occurrences ?? null,
-        ]
-      );
-      const entryId = result.insertId;
-
-      for (const l of input.labor) {
-        if (l.count <= 0) continue;
-        await rawQuery(`INSERT INTO site_diary_labor_entries (diaryEntryId, role, count) VALUES (?, ?, ?)`, [
-          entryId,
-          l.role,
-          l.count,
-        ]);
-      }
-
-      for (const photoDataUrl of input.photos) {
-        try {
-          const fileName = await saveDiaryPhoto(photoDataUrl);
-          await rawQuery(`INSERT INTO site_diary_photos (diaryEntryId, fileName) VALUES (?, ?)`, [entryId, fileName]);
-        } catch (error: any) {
-          console.error("[SiteDiary] Falha ao salvar foto", error);
-          throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Falha ao salvar foto" });
-        }
-      }
-
-      const [entry] = await loadEntriesWithDetails([entryId]);
-      return entry;
+      return createEntryCore(input, { authorUserId: ctx.user.id, fieldUserId: null });
     }),
 
   addPhotos: protectedProcedure
@@ -202,6 +216,53 @@ async function assertClientProjectAccess(projectId: number, clientId: number) {
   const rows = await rawQuery(`SELECT id FROM projects WHERE id = ? AND clientId = ? LIMIT 1`, [projectId, clientId]);
   if (!rows.length) throw new TRPCError({ code: "FORBIDDEN", message: "Sem acesso a este projeto" });
 }
+
+/**
+ * Login de campo: o projectId vem SEMPRE da sessão (ctx.fieldUser.projectId),
+ * nunca do input — assim o mestre da obra A não consegue lançar na obra B
+ * mesmo adulterando a requisição. Só lê e cria; não edita nem exclui.
+ */
+export const fieldDiaryRouter = router({
+  me: fieldProcedure.query(async ({ ctx }) => {
+    const rows = await rawQuery(`SELECT id, name FROM projects WHERE id = ? LIMIT 1`, [ctx.fieldUser.projectId]);
+    return {
+      email: ctx.fieldUser.email,
+      name: ctx.fieldUser.name,
+      projectId: ctx.fieldUser.projectId,
+      projectName: rows[0]?.name ?? null,
+    };
+  }),
+
+  listStages: fieldProcedure.query(async ({ ctx }) => {
+    return rawQuery(
+      `SELECT bs.id, bs.name, b.title as budgetTitle
+       FROM budget_stages bs
+       JOIN budgets b ON b.id = bs.budgetId
+       WHERE b.projectId = ?
+       ORDER BY b.title, bs.\`order\``,
+      [ctx.fieldUser.projectId]
+    );
+  }),
+
+  list: fieldProcedure.query(async ({ ctx }) => {
+    const ids = await rawQuery(
+      `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
+      [ctx.fieldUser.projectId]
+    );
+    return loadEntriesWithDetails(ids.map((r: any) => r.id));
+  }),
+
+  create: fieldProcedure
+    .input(createEntrySchema.omit({ projectId: true }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await rawQuery(`SELECT userId FROM projects WHERE id = ? LIMIT 1`, [ctx.fieldUser.projectId]);
+      if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Projeto não encontrado" });
+      return createEntryCore(
+        { ...input, projectId: ctx.fieldUser.projectId },
+        { authorUserId: rows[0].userId, fieldUserId: ctx.fieldUser.id }
+      );
+    }),
+});
 
 export const clientPortalRouter = router({
   listProjects: clientProcedure.query(async ({ ctx }) => {

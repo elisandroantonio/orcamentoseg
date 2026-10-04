@@ -1493,3 +1493,31 @@ export async function setClientUserActive(id: number, isActive: boolean): Promis
 export async function touchClientUserLastSignedIn(id: number): Promise<void> {
   await rawQuery(`UPDATE client_users SET lastSignedIn = NOW() WHERE id = ?`, [id]);
 }
+
+// ─── Diário de Obras: login de campo por obra (site_diary_field_users) ─────
+
+export type FieldUserRecord = {
+  id: number;
+  projectId: number;
+  email: string;
+  passwordHash: string;
+  name: string | null;
+  isActive: number;
+  lastSignedIn: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export async function getFieldUserByEmail(email: string): Promise<FieldUserRecord | undefined> {
+  const rows = await rawQuery(`SELECT * FROM site_diary_field_users WHERE email = ? LIMIT 1`, [email]);
+  return rows[0] as FieldUserRecord | undefined;
+}
+
+export async function getFieldUserById(id: number): Promise<FieldUserRecord | undefined> {
+  const rows = await rawQuery(`SELECT * FROM site_diary_field_users WHERE id = ? LIMIT 1`, [id]);
+  return rows[0] as FieldUserRecord | undefined;
+}
+
+export async function touchFieldUserLastSignedIn(id: number): Promise<void> {
+  await rawQuery(`UPDATE site_diary_field_users SET lastSignedIn = NOW() WHERE id = ?`, [id]);
+}

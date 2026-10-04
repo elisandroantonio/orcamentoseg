@@ -12,6 +12,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useEffect } from "react";
 import { BookOpen } from "lucide-react";
 import ClientDiaryAccessCard from "@/components/ClientDiaryAccessCard";
+import FieldDiaryAccessCard from "@/components/FieldDiaryAccessCard";
 
 interface FormData {
   name: string;
@@ -232,6 +233,8 @@ export default function ProjectForm() {
                   Abrir Diário de Obras
                 </Button>
               </Link>
+
+              <FieldDiaryAccessCard projectId={Number(id)} />
 
               {project?.clientId ? (
                 <ClientDiaryAccessCard clientId={project.clientId} />

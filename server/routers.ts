@@ -10,8 +10,8 @@ import { additivesRouter } from "./routers/additives";
 import { materialListsRouter } from "./routers/materialLists";
 import { cubScRouter } from "./routers/cubSc";
 import { materialMergeRulesRouter } from "./routers/materialMergeRules";
-import { siteDiaryRouter, clientPortalRouter } from "./routers/siteDiary";
-import { clientPortalAdminRouter } from "./routers/clientPortalAdmin";
+import { siteDiaryRouter, clientPortalRouter, fieldDiaryRouter } from "./routers/siteDiary";
+import { clientPortalAdminRouter, fieldLoginsAdminRouter } from "./routers/clientPortalAdmin";
 import { buildHistoricalRates, generateScheduleDraft, type StageInput } from "./lib/scheduleEngine";
 import {
   inputs, compositions, compositionInputs, projects, budgets, budgetItems, budgetItemInputs,
@@ -31,6 +31,8 @@ export const appRouter = router({
   siteDiary: siteDiaryRouter,
   clientLogins: clientPortalAdminRouter,
   clientPortal: clientPortalRouter,
+  fieldDiary: fieldDiaryRouter,
+  fieldLogins: fieldLoginsAdminRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

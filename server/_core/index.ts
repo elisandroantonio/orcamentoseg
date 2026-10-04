@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerDevAuthRoute } from "./devAuth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerClientAuthRoutes } from "./clientAuth";
+import { registerFieldAuthRoutes } from "./fieldAuth";
 import { registerSiteDiaryPhotoRoute } from "./diaryPhotoRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -202,6 +203,27 @@ async function runSafeMigrations() {
     )`);
     console.log('[Migration] site_diary_photos table ensured');
 
+    // Diário de Obras — login de campo por obra (ver server/_core/fieldAuth.ts)
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_field_users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      projectId INT NOT NULL,
+      email VARCHAR(320) NOT NULL,
+      passwordHash VARCHAR(255) NOT NULL,
+      name VARCHAR(255),
+      isActive TINYINT(1) NOT NULL DEFAULT 1,
+      lastSignedIn TIMESTAMP NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      updatedAt TIMESTAMP NOT NULL DEFAULT NOW() ON UPDATE NOW(),
+      UNIQUE KEY site_diary_field_users_email_uq (email),
+      INDEX site_diary_field_users_projectId_idx (projectId)
+    )`);
+    console.log('[Migration] site_diary_field_users table ensured');
+
+    // Entradas feitas por login de campo guardam quem foi (fieldUserId);
+    // userId continua apontando pro dono do projeto (NOT NULL).
+    await rawQuery(`ALTER TABLE site_diary_entries ADD COLUMN IF NOT EXISTS fieldUserId INT NULL`);
+    console.log('[Migration] fieldUserId column ensured in site_diary_entries');
+
   } catch (err: any) {
     console.warn('[Migration] Safe migration warning:', err?.message || err);
   }
@@ -222,6 +244,8 @@ async function startServer() {
   registerDevAuthRoute(app);
   // Login próprio do portal do cliente (Diário de Obras) — ver clientAuth.ts
   registerClientAuthRoutes(app);
+  // Login de campo por obra (mestre/encarregado) — ver fieldAuth.ts
+  registerFieldAuthRoutes(app);
   // Serve as fotos do Diário de Obras com checagem de permissão (equipe
   // interna dono do projeto, ou cliente com acesso àquele projeto)
   registerSiteDiaryPhotoRoute(app);

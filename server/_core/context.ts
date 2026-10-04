@@ -1,14 +1,16 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
-import type { ClientUserRecord } from "../db";
+import type { ClientUserRecord, FieldUserRecord } from "../db";
 import { sdk } from "./sdk";
 import { authenticateClientRequest } from "./clientAuth";
+import { authenticateFieldRequest } from "./fieldAuth";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
   user: User | null;
   clientUser: ClientUserRecord | null;
+  fieldUser: FieldUserRecord | null;
 };
 
 export async function createContext(
@@ -33,10 +35,18 @@ export async function createContext(
     clientUser = null;
   }
 
+  let fieldUser: FieldUserRecord | null = null;
+  try {
+    fieldUser = await authenticateFieldRequest(opts.req);
+  } catch (error) {
+    fieldUser = null;
+  }
+
   return {
     req: opts.req,
     res: opts.res,
     user,
     clientUser,
+    fieldUser,
   };
 }
