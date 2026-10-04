@@ -24,6 +24,28 @@ const createEntrySchema = z.object({
   photos: z.array(z.string()).max(20).default([]), // data URLs
 });
 
+/**
+ * O Diário de Obras só vale para obras EM EXECUÇÃO: o projeto precisa ter
+ * pelo menos um orçamento com workStatus = 'execucao'. Regra única,
+ * reaproveitada pela equipe, pelo login de campo, pelo portal do cliente e
+ * pela rota de fotos (ver diaryPhotoRoute.ts).
+ */
+export const DIARY_NOT_IN_EXECUTION_MSG = "O Diário de Obras só está disponível para obras em execução.";
+
+export async function isProjectInExecution(projectId: number): Promise<boolean> {
+  const rows = await rawQuery(
+    `SELECT id FROM budgets WHERE projectId = ? AND workStatus = 'execucao' LIMIT 1`,
+    [projectId]
+  );
+  return rows.length > 0;
+}
+
+async function assertProjectInExecution(projectId: number) {
+  if (!(await isProjectInExecution(projectId))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: DIARY_NOT_IN_EXECUTION_MSG });
+  }
+}
+
 /** Garante que o projeto pertence ao usuário logado antes de ler/gravar nele. */
 async function assertProjectOwner(projectId: number, userId: number) {
   const rows = await rawQuery(`SELECT id FROM projects WHERE id = ? AND userId = ? LIMIT 1`, [projectId, userId]);
@@ -133,11 +155,20 @@ async function createEntryCore(
 }
 
 export const siteDiaryRouter = router({
+  // Diz se o diário está liberado pro projeto (obra em execução) — usado pela UI.
+  status: protectedProcedure
+    .input(z.object({ projectId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertProjectOwner(input.projectId, ctx.user.id);
+      return { inExecution: await isProjectInExecution(input.projectId) };
+    }),
+
   // Lista as etapas disponíveis (de todos os orçamentos do projeto) pro seletor opcional.
   listStagesForProject: protectedProcedure
     .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       await assertProjectOwner(input.projectId, ctx.user.id);
+      await assertProjectInExecution(input.projectId);
       return rawQuery(
         `SELECT bs.id, bs.name, b.title as budgetTitle
          FROM budget_stages bs
@@ -152,6 +183,7 @@ export const siteDiaryRouter = router({
     .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       await assertProjectOwner(input.projectId, ctx.user.id);
+      await assertProjectInExecution(input.projectId);
       const ids = await rawQuery(
         `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
         [input.projectId]
@@ -163,6 +195,7 @@ export const siteDiaryRouter = router({
     .input(createEntrySchema)
     .mutation(async ({ ctx, input }) => {
       await assertProjectOwner(input.projectId, ctx.user.id);
+      await assertProjectInExecution(input.projectId);
       return createEntryCore(input, { authorUserId: ctx.user.id, fieldUserId: null });
     }),
 
@@ -230,10 +263,12 @@ export const fieldDiaryRouter = router({
       name: ctx.fieldUser.name,
       projectId: ctx.fieldUser.projectId,
       projectName: rows[0]?.name ?? null,
+      inExecution: await isProjectInExecution(ctx.fieldUser.projectId),
     };
   }),
 
   listStages: fieldProcedure.query(async ({ ctx }) => {
+    await assertProjectInExecution(ctx.fieldUser.projectId);
     return rawQuery(
       `SELECT bs.id, bs.name, b.title as budgetTitle
        FROM budget_stages bs
@@ -245,6 +280,7 @@ export const fieldDiaryRouter = router({
   }),
 
   list: fieldProcedure.query(async ({ ctx }) => {
+    await assertProjectInExecution(ctx.fieldUser.projectId);
     const ids = await rawQuery(
       `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
       [ctx.fieldUser.projectId]
@@ -255,6 +291,7 @@ export const fieldDiaryRouter = router({
   create: fieldProcedure
     .input(createEntrySchema.omit({ projectId: true }))
     .mutation(async ({ ctx, input }) => {
+      await assertProjectInExecution(ctx.fieldUser.projectId);
       const rows = await rawQuery(`SELECT userId FROM projects WHERE id = ? LIMIT 1`, [ctx.fieldUser.projectId]);
       if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Projeto não encontrado" });
       return createEntryCore(
@@ -266,8 +303,13 @@ export const fieldDiaryRouter = router({
 
 export const clientPortalRouter = router({
   listProjects: clientProcedure.query(async ({ ctx }) => {
+    // Só projetos do cliente com obra em execução (ver isProjectInExecution).
     return rawQuery(
-      `SELECT id, name, location, status, startDate, endDate FROM projects WHERE clientId = ? ORDER BY createdAt DESC`,
+      `SELECT p.id, p.name, p.location, p.status, p.startDate, p.endDate
+       FROM projects p
+       WHERE p.clientId = ?
+         AND EXISTS (SELECT 1 FROM budgets b WHERE b.projectId = p.id AND b.workStatus = 'execucao')
+       ORDER BY p.createdAt DESC`,
       [ctx.clientUser.clientId]
     );
   }),
@@ -276,6 +318,7 @@ export const clientPortalRouter = router({
     .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       await assertClientProjectAccess(input.projectId, ctx.clientUser.clientId);
+      await assertProjectInExecution(input.projectId);
       const ids = await rawQuery(
         `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
         [input.projectId]

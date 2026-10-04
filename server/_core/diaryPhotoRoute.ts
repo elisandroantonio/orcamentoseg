@@ -4,6 +4,7 @@ import { authenticateClientRequest } from "./clientAuth";
 import { authenticateFieldRequest } from "./fieldAuth";
 import { sdk } from "./sdk";
 import { rawQuery } from "../db";
+import { isProjectInExecution } from "../routers/siteDiary";
 
 const EXT_TO_CONTENT_TYPE: Record<string, string> = {
   jpg: "image/jpeg",
@@ -35,6 +36,12 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
       const row = rows[0];
       if (!row) {
         res.status(404).send("Foto não encontrada");
+        return;
+      }
+
+      // Diário só vale para obra em execução — fotos de obra fora de execução ficam indisponíveis.
+      if (!(await isProjectInExecution(row.projectId))) {
+        res.status(403).send("O Diário de Obras só está disponível para obras em execução.");
         return;
       }
 

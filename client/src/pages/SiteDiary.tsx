@@ -15,8 +15,11 @@ export default function SiteDiary() {
   const utils = trpc.useUtils();
 
   const { data: project } = trpc.projects.get.useQuery({ id: projectId });
-  const { data: entries, isLoading } = trpc.siteDiary.list.useQuery({ projectId });
-  const { data: stages } = trpc.siteDiary.listStagesForProject.useQuery({ projectId });
+  // O diário só vale para obras em execução (ver isProjectInExecution no servidor).
+  const { data: diaryStatus, isLoading: statusLoading } = trpc.siteDiary.status.useQuery({ projectId });
+  const inExecution = !!diaryStatus?.inExecution;
+  const { data: entries, isLoading } = trpc.siteDiary.list.useQuery({ projectId }, { enabled: inExecution });
+  const { data: stages } = trpc.siteDiary.listStagesForProject.useQuery({ projectId }, { enabled: inExecution });
 
   const [formOpen, setFormOpen] = useState(false);
 
@@ -56,8 +59,17 @@ export default function SiteDiary() {
           </div>
         </div>
 
-        {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
-        {!isLoading && (!entries || entries.length === 0) && (
+        {!statusLoading && !inExecution && (
+          <Card>
+            <CardContent className="py-8 text-center text-muted-foreground">
+              O Diário de Obras só está disponível para obras <strong>em execução</strong>. Mude o status de um
+              orçamento deste projeto para "Em execução" para liberar.
+            </CardContent>
+          </Card>
+        )}
+
+        {inExecution && isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
+        {inExecution && !isLoading && (!entries || entries.length === 0) && (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
               Nenhum registro ainda. Toque no botão + para criar o primeiro.
@@ -73,13 +85,15 @@ export default function SiteDiary() {
       </div>
 
       {/* FAB */}
-      <Button
-        size="icon"
-        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-40"
-        onClick={() => setFormOpen(true)}
-      >
-        <Plus className="h-6 w-6" />
-      </Button>
+      {inExecution && (
+        <Button
+          size="icon"
+          className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-40"
+          onClick={() => setFormOpen(true)}
+        >
+          <Plus className="h-6 w-6" />
+        </Button>
+      )}
 
       <DiaryEntryDialog
         open={formOpen}

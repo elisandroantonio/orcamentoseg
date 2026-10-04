@@ -19,9 +19,11 @@ export default function ClientPortalDiary() {
 
   const { data: entries, isLoading, error } = trpc.clientPortal.listEntries.useQuery({ projectId: pid }, { retry: false });
 
+  // Só volta pro login se a sessão caiu; obra fora de execução (FORBIDDEN) mostra aviso.
+  const notLoggedIn = (error as any)?.data?.code === "UNAUTHORIZED";
   useEffect(() => {
-    if (error) setLocation("/portal/login");
-  }, [error, setLocation]);
+    if (notLoggedIn) setLocation("/portal/login");
+  }, [notLoggedIn, setLocation]);
 
   return (
     <div className="min-h-screen bg-muted/20">
@@ -34,7 +36,10 @@ export default function ClientPortalDiary() {
 
       <div className="max-w-2xl mx-auto p-4 space-y-3">
         {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
-        {!isLoading && (!entries || entries.length === 0) && (
+        {error && !notLoggedIn && (
+          <Card><CardContent className="py-8 text-center text-muted-foreground">{error.message}</CardContent></Card>
+        )}
+        {!isLoading && !error && (!entries || entries.length === 0) && (
           <Card><CardContent className="py-8 text-center text-muted-foreground">Ainda não há registros neste projeto.</CardContent></Card>
         )}
 
