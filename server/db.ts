@@ -1451,7 +1451,10 @@ export async function unfreezeBudget(budgetId: number, userId: number): Promise<
 export type ClientUserRecord = {
   id: number;
   clientId: number;
-  email: string;
+  /** Nome de login (identificador de acesso). */
+  username: string;
+  /** Opcional — só pra encaminhar o acesso. */
+  email: string | null;
   passwordHash: string;
   name: string | null;
   isActive: number;
@@ -1460,8 +1463,8 @@ export type ClientUserRecord = {
   updatedAt: Date;
 };
 
-export async function getClientUserByEmail(email: string): Promise<ClientUserRecord | undefined> {
-  const rows = await rawQuery(`SELECT * FROM client_users WHERE email = ? LIMIT 1`, [email]);
+export async function getClientUserByLogin(login: string): Promise<ClientUserRecord | undefined> {
+  const rows = await rawQuery(`SELECT * FROM client_users WHERE username = ? OR email = ? LIMIT 1`, [login, login]);
   return rows[0] as ClientUserRecord | undefined;
 }
 
@@ -1501,7 +1504,10 @@ export type FieldUserRecord = {
   /** Diário por orçamento: null só em logins antigos que não casaram com nenhum orçamento em execução. */
   budgetId: number | null;
   projectId: number | null;
-  email: string;
+  /** Nome de login (identificador de acesso). */
+  username: string;
+  /** Opcional — só pra encaminhar o acesso. */
+  email: string | null;
   passwordHash: string;
   name: string | null;
   isActive: number;
@@ -1510,8 +1516,8 @@ export type FieldUserRecord = {
   updatedAt: Date;
 };
 
-export async function getFieldUserByEmail(email: string): Promise<FieldUserRecord | undefined> {
-  const rows = await rawQuery(`SELECT * FROM site_diary_field_users WHERE email = ? LIMIT 1`, [email]);
+export async function getFieldUserByLogin(login: string): Promise<FieldUserRecord | undefined> {
+  const rows = await rawQuery(`SELECT * FROM site_diary_field_users WHERE username = ? OR email = ? LIMIT 1`, [login, login]);
   return rows[0] as FieldUserRecord | undefined;
 }
 

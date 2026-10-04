@@ -275,6 +275,7 @@ export const fieldDiaryRouter = router({
     const budgetId = ctx.fieldUser.budgetId;
     const rows = budgetId ? await rawQuery(`SELECT title FROM budgets WHERE id = ? LIMIT 1`, [budgetId]) : [];
     return {
+      username: ctx.fieldUser.username,
       email: ctx.fieldUser.email,
       name: ctx.fieldUser.name,
       budgetId,
@@ -337,6 +338,6 @@ export const clientPortalRouter = router({
     }),
 
   me: clientProcedure.query(async ({ ctx }) => {
-    return { email: ctx.clientUser.email, name: ctx.clientUser.name };
+    return { username: ctx.clientUser.username, email: ctx.clientUser.email, name: ctx.clientUser.name };
   }),
 });

@@ -27,7 +27,7 @@ export default function ClientPortalProjects() {
           <span className="font-semibold">Diário de Obras</span>
         </div>
         <div className="flex items-center gap-3">
-          {me && <span className="text-sm text-muted-foreground hidden sm:inline">{me.name || me.email}</span>}
+          {me && <span className="text-sm text-muted-foreground hidden sm:inline">{me.name || me.username}</span>}
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="h-4 w-4 mr-1" /> Sair
           </Button>

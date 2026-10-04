@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { HardHat, Plus } from "lucide-react";
+import NewLoginDialog from "@/components/NewLoginDialog";
+import { HardHat } from "lucide-react";
 
 /**
  * Gestão dos logins de CAMPO (mestre/encarregado) de um orçamento (obra), dentro
@@ -25,21 +26,12 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
   const utils = trpc.useUtils();
   const { data: logins, isLoading } = trpc.fieldLogins.list.useQuery({ budgetId });
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-
-  const [resetTarget, setResetTarget] = useState<{ id: number; email: string } | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: number; username: string } | null>(null);
   const [resetPassword, setResetPassword] = useState("");
 
   const createLogin = trpc.fieldLogins.create.useMutation({
     onSuccess: () => {
       toast.success("Login de campo criado");
-      setCreateOpen(false);
-      setEmail("");
-      setPassword("");
-      setName("");
       utils.fieldLogins.list.invalidate({ budgetId });
     },
     onError: (err) => toast.error(err.message || "Erro ao criar login"),
@@ -66,41 +58,16 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
           <HardHat className="h-4 w-4" />
           Acesso de campo (mestre/encarregado) — só lança no diário deste orçamento
         </Label>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" variant="outline">
-              <Plus className="h-4 w-4 mr-1" /> Novo login
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Criar login de campo</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label htmlFor="field-login-name">Nome</Label>
-                <Input id="field-login-name" value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Mestre João" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="field-login-email">E-mail</Label>
-                <Input id="field-login-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="mestre@email.com" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="field-login-password">Senha</Label>
-                <Input id="field-login-password" type="text" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
-                <p className="text-xs text-muted-foreground">Anote essa senha — ela não aparece de novo depois.</p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                disabled={!email || password.length < 6 || createLogin.isPending}
-                onClick={() => createLogin.mutate({ budgetId, email, password, name: name || undefined })}
-              >
-                Criar login
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <NewLoginDialog
+          title="Criar login de campo"
+          namePlaceholder="Ex: Mestre João"
+          accessPath="/campo/login"
+          audience="registrar o Diário de Obras"
+          isPending={createLogin.isPending}
+          onCreate={async (v) => {
+            await createLogin.mutateAsync({ budgetId, username: v.username, email: v.email || undefined, password: v.password, name: v.name || undefined });
+          }}
+        />
       </div>
 
       <p className="text-xs text-muted-foreground">
@@ -118,8 +85,8 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
           {logins.map((l: any) => (
             <div key={l.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
               <div>
-                <div className="font-medium">{l.name || l.email}</div>
-                <div className="text-muted-foreground text-xs">{l.email}</div>
+                <div className="font-medium">{l.name || l.username}</div>
+                <div className="text-muted-foreground text-xs">Usuário: {l.username}{l.email ? ` · ${l.email}` : ""}</div>
               </div>
               <div className="flex items-center gap-3">
                 <Badge variant={l.isActive ? "default" : "secondary"}>{l.isActive ? "Ativo" : "Inativo"}</Badge>
@@ -129,14 +96,14 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
                 />
                 <Dialog
                   open={resetTarget?.id === l.id}
-                  onOpenChange={(open) => setResetTarget(open ? { id: l.id, email: l.email } : null)}
+                  onOpenChange={(open) => setResetTarget(open ? { id: l.id, username: l.username } : null)}
                 >
                   <DialogTrigger asChild>
                     <Button size="sm" variant="ghost">Redefinir senha</Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Redefinir senha — {l.email}</DialogTitle>
+                      <DialogTitle>Redefinir senha — {l.username}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-1">
                       <Label htmlFor="field-reset-password">Nova senha</Label>

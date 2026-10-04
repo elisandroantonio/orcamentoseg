@@ -240,6 +240,21 @@ async function runSafeMigrations() {
     ) WHERE budgetId IS NULL AND projectId IS NOT NULL`);
     console.log('[Migration] site diary budgetId columns ensured and backfilled');
 
+    // Login por USUÁRIO (nome de login) em vez de só e-mail: muita gente de
+    // campo não tem e-mail. username é o identificador de login; email vira
+    // opcional (só pra encaminhar o acesso). Logins antigos: username = email.
+    for (const table of ['client_users', 'site_diary_field_users']) {
+      await rawQuery(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS username VARCHAR(100) NULL`);
+      await rawQuery(`ALTER TABLE ${table} MODIFY COLUMN email VARCHAR(320) NULL`);
+      await rawQuery(`UPDATE ${table} SET username = LOWER(email) WHERE username IS NULL AND email IS NOT NULL`);
+      try {
+        await rawQuery(`ALTER TABLE ${table} ADD UNIQUE KEY ${table}_username_uq (username)`);
+      } catch (e: any) {
+        // já existe (re-execução do boot) — ok
+      }
+    }
+    console.log('[Migration] username login columns ensured');
+
   } catch (err: any) {
     console.warn('[Migration] Safe migration warning:', err?.message || err);
   }

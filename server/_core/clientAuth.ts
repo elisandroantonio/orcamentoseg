@@ -90,11 +90,11 @@ export async function authenticateClientRequest(req: Request): Promise<db.Client
 
 export function registerClientAuthRoutes(app: Express) {
   app.post("/api/client-portal/login", async (req: Request, res: Response) => {
-    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const login = typeof (req.body?.login ?? req.body?.email) === "string" ? String(req.body.login ?? req.body.email).trim().toLowerCase() : "";
     const password = typeof req.body?.password === "string" ? req.body.password : "";
 
-    if (!email || !password) {
-      res.status(400).json({ error: "Informe e-mail e senha." });
+    if (!login || !password) {
+      res.status(400).json({ error: "Informe usuário e senha." });
       return;
     }
 
@@ -102,13 +102,13 @@ export function registerClientAuthRoutes(app: Express) {
     // enumeração de e-mail cadastrado via timing.
     const start = Date.now();
     try {
-      const clientUser = await db.getClientUserByEmail(email);
+      const clientUser = await db.getClientUserByLogin(login);
       const passwordOk = clientUser ? await verifyPassword(password, clientUser.passwordHash) : false;
 
       if (!clientUser || !clientUser.isActive || !passwordOk) {
         const elapsed = Date.now() - start;
         if (elapsed < 400) await new Promise(r => setTimeout(r, 400 - elapsed));
-        res.status(401).json({ error: "E-mail ou senha incorretos." });
+        res.status(401).json({ error: "Usuário ou senha incorretos." });
         return;
       }
 
@@ -116,7 +116,7 @@ export function registerClientAuthRoutes(app: Express) {
       const token = await createClientSessionToken(clientUser.id);
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(CLIENT_COOKIE_NAME, token, { ...cookieOptions, maxAge: THIRTY_DAYS_MS });
-      res.json({ ok: true, name: clientUser.name, email: clientUser.email });
+      res.json({ ok: true, name: clientUser.name, username: clientUser.username });
     } catch (error) {
       console.error("[ClientAuth] Login falhou", error);
       res.status(500).json({ error: "Instabilidade temporária. Tente de novo em alguns segundos." });

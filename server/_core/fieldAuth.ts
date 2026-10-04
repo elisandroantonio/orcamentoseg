@@ -67,23 +67,23 @@ export async function authenticateFieldRequest(req: Request): Promise<db.FieldUs
 
 export function registerFieldAuthRoutes(app: Express) {
   app.post("/api/field-diary/login", async (req: Request, res: Response) => {
-    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const login = typeof (req.body?.login ?? req.body?.email) === "string" ? String(req.body.login ?? req.body.email).trim().toLowerCase() : "";
     const password = typeof req.body?.password === "string" ? req.body.password : "";
 
-    if (!email || !password) {
-      res.status(400).json({ error: "Informe e-mail e senha." });
+    if (!login || !password) {
+      res.status(400).json({ error: "Informe usuário e senha." });
       return;
     }
 
     const start = Date.now();
     try {
-      const fieldUser = await db.getFieldUserByEmail(email);
+      const fieldUser = await db.getFieldUserByLogin(login);
       const passwordOk = fieldUser ? await verifyPassword(password, fieldUser.passwordHash) : false;
 
       if (!fieldUser || !fieldUser.isActive || !passwordOk) {
         const elapsed = Date.now() - start;
         if (elapsed < 400) await new Promise(r => setTimeout(r, 400 - elapsed));
-        res.status(401).json({ error: "E-mail ou senha incorretos." });
+        res.status(401).json({ error: "Usuário ou senha incorretos." });
         return;
       }
 
@@ -91,7 +91,7 @@ export function registerFieldAuthRoutes(app: Express) {
       const token = await createFieldSessionToken(fieldUser.id);
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(FIELD_COOKIE_NAME, token, { ...cookieOptions, maxAge: THIRTY_DAYS_MS });
-      res.json({ ok: true, name: fieldUser.name, email: fieldUser.email });
+      res.json({ ok: true, name: fieldUser.name, username: fieldUser.username });
     } catch (error) {
       console.error("[FieldAuth] Login falhou", error);
       res.status(500).json({ error: "Instabilidade temporária. Tente de novo em alguns segundos." });

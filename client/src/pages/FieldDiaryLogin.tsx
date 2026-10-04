@@ -13,7 +13,7 @@ import { HardHat } from "lucide-react";
  */
 export default function FieldDiaryLogin() {
   const [, setLocation] = useLocation();
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -27,14 +27,14 @@ export default function FieldDiaryLogin() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ login, password }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Falha no login");
         return;
       }
-      toast.success(`Bem-vindo, ${data.name || data.email}`);
+      toast.success(`Bem-vindo, ${data.name || data.username}`);
       setLocation("/campo");
     } catch (err) {
       setError("Erro de conexão. Tente de novo.");
@@ -56,8 +56,8 @@ export default function FieldDiaryLogin() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">E-mail</Label>
-              <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus />
+              <Label htmlFor="login">Usuário</Label>
+              <Input id="login" type="text" value={login} onChange={e => setLogin(e.target.value)} required autoFocus autoCapitalize="none" autoCorrect="off" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Senha</Label>

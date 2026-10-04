@@ -4,6 +4,21 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { rawQuery } from "../db";
 import { hashPassword } from "../_core/clientAuth";
 
+/** Nome de login: sem espaços, só letras/números e . _ - (normalizado em minúsculas). */
+const usernameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3, "Usuário deve ter ao menos 3 caracteres")
+  .max(50)
+  .regex(/^[a-z0-9._-]+$/, "Use só letras, números, ponto, hífen ou underline (sem espaços ou acentos)");
+
+/** E-mail é opcional — só pra encaminhar o acesso. Aceita vazio. */
+const optionalEmailSchema = z
+  .union([z.string().trim().toLowerCase().email(), z.literal("")])
+  .nullable()
+  .optional();
+
 /** Garante que o cliente pertence ao usuário logado. */
 async function assertClientOwner(clientId: number, userId: number) {
   const rows = await rawQuery(`SELECT id FROM clients WHERE id = ? AND userId = ? LIMIT 1`, [clientId, userId]);
@@ -34,7 +49,7 @@ export const fieldLoginsAdminRouter = router({
     .query(async ({ ctx, input }) => {
       await assertBudgetOwner(input.budgetId, ctx.user.id);
       return rawQuery(
-        `SELECT id, email, name, isActive, lastSignedIn, createdAt FROM site_diary_field_users WHERE budgetId = ? ORDER BY createdAt DESC`,
+        `SELECT id, username, email, name, isActive, lastSignedIn, createdAt FROM site_diary_field_users WHERE budgetId = ? ORDER BY createdAt DESC`,
         [input.budgetId]
       );
     }),
@@ -43,7 +58,8 @@ export const fieldLoginsAdminRouter = router({
     .input(
       z.object({
         budgetId: z.number().int(),
-        email: z.string().trim().email(),
+        username: usernameSchema,
+        email: optionalEmailSchema,
         password: z.string().min(6).max(100),
         name: z.string().trim().max(255).nullable().optional(),
       })
@@ -51,16 +67,18 @@ export const fieldLoginsAdminRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertBudgetOwner(input.budgetId, ctx.user.id);
 
-      const email = input.email.toLowerCase();
-      const existing = await rawQuery(`SELECT id FROM site_diary_field_users WHERE email = ? LIMIT 1`, [email]);
+      const existing = await rawQuery(
+        `SELECT id FROM site_diary_field_users WHERE username = ? OR email = ? LIMIT 1`,
+        [input.username, input.username]
+      );
       if (existing.length) {
-        throw new TRPCError({ code: "CONFLICT", message: "Já existe um login de campo com este e-mail" });
+        throw new TRPCError({ code: "CONFLICT", message: "Já existe um login de campo com este usuário" });
       }
 
       const passwordHash = await hashPassword(input.password);
       const result: any = await rawQuery(
-        `INSERT INTO site_diary_field_users (budgetId, email, passwordHash, name) VALUES (?, ?, ?, ?)`,
-        [input.budgetId, email, passwordHash, input.name ?? null]
+        `INSERT INTO site_diary_field_users (budgetId, username, email, passwordHash, name) VALUES (?, ?, ?, ?, ?)`,
+        [input.budgetId, input.username, input.email || null, passwordHash, input.name ?? null]
       );
       return { id: result.insertId };
     }),
@@ -94,7 +112,7 @@ export const clientPortalAdminRouter = router({
     .query(async ({ ctx, input }) => {
       await assertClientOwner(input.clientId, ctx.user.id);
       return rawQuery(
-        `SELECT id, email, name, isActive, lastSignedIn, createdAt FROM client_users WHERE clientId = ? ORDER BY createdAt DESC`,
+        `SELECT id, username, email, name, isActive, lastSignedIn, createdAt FROM client_users WHERE clientId = ? ORDER BY createdAt DESC`,
         [input.clientId]
       );
     }),
@@ -103,7 +121,8 @@ export const clientPortalAdminRouter = router({
     .input(
       z.object({
         clientId: z.number().int(),
-        email: z.string().trim().email(),
+        username: usernameSchema,
+        email: optionalEmailSchema,
         password: z.string().min(6).max(100),
         name: z.string().trim().max(255).nullable().optional(),
       })
@@ -111,16 +130,18 @@ export const clientPortalAdminRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertClientOwner(input.clientId, ctx.user.id);
 
-      const email = input.email.toLowerCase();
-      const existing = await rawQuery(`SELECT id FROM client_users WHERE email = ? LIMIT 1`, [email]);
+      const existing = await rawQuery(
+        `SELECT id FROM client_users WHERE username = ? OR email = ? LIMIT 1`,
+        [input.username, input.username]
+      );
       if (existing.length) {
-        throw new TRPCError({ code: "CONFLICT", message: "Já existe um login com este e-mail" });
+        throw new TRPCError({ code: "CONFLICT", message: "Já existe um login de cliente com este usuário" });
       }
 
       const passwordHash = await hashPassword(input.password);
       const result: any = await rawQuery(
-        `INSERT INTO client_users (clientId, email, passwordHash, name) VALUES (?, ?, ?, ?)`,
-        [input.clientId, email, passwordHash, input.name ?? null]
+        `INSERT INTO client_users (clientId, username, email, passwordHash, name) VALUES (?, ?, ?, ?, ?)`,
+        [input.clientId, input.username, input.email || null, passwordHash, input.name ?? null]
       );
       return { id: result.insertId };
     }),

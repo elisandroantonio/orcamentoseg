@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { KeyRound, Plus } from "lucide-react";
+import NewLoginDialog from "@/components/NewLoginDialog";
+import { KeyRound } from "lucide-react";
 
 /**
  * Gestão de login do portal do cliente (Diário de Obras), dentro da tela do
@@ -25,21 +26,12 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
   const utils = trpc.useUtils();
   const { data: logins, isLoading } = trpc.clientLogins.listLogins.useQuery({ clientId });
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-
-  const [resetTarget, setResetTarget] = useState<{ id: number; email: string } | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: number; username: string } | null>(null);
   const [resetPassword, setResetPassword] = useState("");
 
   const createLogin = trpc.clientLogins.createLogin.useMutation({
     onSuccess: () => {
       toast.success("Login do cliente criado");
-      setCreateOpen(false);
-      setEmail("");
-      setPassword("");
-      setName("");
       utils.clientLogins.listLogins.invalidate({ clientId });
     },
     onError: (err) => toast.error(err.message || "Erro ao criar login"),
@@ -66,41 +58,16 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
           <KeyRound className="h-4 w-4" />
           Acesso do cliente{clientName ? ` (${clientName})` : ""} — vê todas as obras dele em execução
         </Label>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" variant="outline">
-              <Plus className="h-4 w-4 mr-1" /> Novo login
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Criar login do cliente</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label htmlFor="client-login-name">Nome (opcional)</Label>
-                <Input id="client-login-name" value={name} onChange={e => setName(e.target.value)} placeholder="Nome do contato" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="client-login-email">E-mail</Label>
-                <Input id="client-login-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="cliente@email.com" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="client-login-password">Senha</Label>
-                <Input id="client-login-password" type="text" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
-                <p className="text-xs text-muted-foreground">Anote essa senha — ela não aparece de novo depois.</p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                disabled={!email || password.length < 6 || createLogin.isPending}
-                onClick={() => createLogin.mutate({ clientId, email, password, name: name || undefined })}
-              >
-                Criar login
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <NewLoginDialog
+          title="Criar login do cliente"
+          namePlaceholder="Nome do contato"
+          accessPath="/portal/login"
+          audience="acompanhar o Diário de Obras"
+          isPending={createLogin.isPending}
+          onCreate={async (v) => {
+            await createLogin.mutateAsync({ clientId, username: v.username, email: v.email || undefined, password: v.password, name: v.name || undefined });
+          }}
+        />
       </div>
 
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
@@ -114,8 +81,8 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
           {logins.map((l: any) => (
             <div key={l.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
               <div>
-                <div className="font-medium">{l.name || l.email}</div>
-                <div className="text-muted-foreground text-xs">{l.email}</div>
+                <div className="font-medium">{l.name || l.username}</div>
+                <div className="text-muted-foreground text-xs">Usuário: {l.username}{l.email ? ` · ${l.email}` : ""}</div>
               </div>
               <div className="flex items-center gap-3">
                 <Badge variant={l.isActive ? "default" : "secondary"}>{l.isActive ? "Ativo" : "Inativo"}</Badge>
@@ -125,14 +92,14 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
                 />
                 <Dialog
                   open={resetTarget?.id === l.id}
-                  onOpenChange={(open) => setResetTarget(open ? { id: l.id, email: l.email } : null)}
+                  onOpenChange={(open) => setResetTarget(open ? { id: l.id, username: l.username } : null)}
                 >
                   <DialogTrigger asChild>
                     <Button size="sm" variant="ghost">Redefinir senha</Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Redefinir senha — {l.email}</DialogTitle>
+                      <DialogTitle>Redefinir senha — {l.username}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-1">
                       <Label htmlFor="reset-password">Nova senha</Label>
