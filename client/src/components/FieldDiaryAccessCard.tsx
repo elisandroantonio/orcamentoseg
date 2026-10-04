@@ -17,13 +17,13 @@ import { toast } from "sonner";
 import { HardHat, Plus } from "lucide-react";
 
 /**
- * Gestão dos logins de CAMPO (mestre/encarregado) de uma obra, dentro da tela
- * do Projeto. Cada login só enxerga e lança no Diário de Obras desta obra —
- * não acessa orçamentos nem outras obras.
+ * Gestão dos logins de CAMPO (mestre/encarregado) de um orçamento (obra), dentro
+ * da tela do Diário de Obras. Cada login só enxerga e lança no diário deste
+ * orçamento — não acessa orçamentos nem outras obras.
  */
-export default function FieldDiaryAccessCard({ projectId }: { projectId: number }) {
+export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number }) {
   const utils = trpc.useUtils();
-  const { data: logins, isLoading } = trpc.fieldLogins.list.useQuery({ projectId });
+  const { data: logins, isLoading } = trpc.fieldLogins.list.useQuery({ budgetId });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -40,7 +40,7 @@ export default function FieldDiaryAccessCard({ projectId }: { projectId: number 
       setEmail("");
       setPassword("");
       setName("");
-      utils.fieldLogins.list.invalidate({ projectId });
+      utils.fieldLogins.list.invalidate({ budgetId });
     },
     onError: (err) => toast.error(err.message || "Erro ao criar login"),
   });
@@ -55,7 +55,7 @@ export default function FieldDiaryAccessCard({ projectId }: { projectId: number 
   });
 
   const setActive = trpc.fieldLogins.setActive.useMutation({
-    onSuccess: () => utils.fieldLogins.list.invalidate({ projectId }),
+    onSuccess: () => utils.fieldLogins.list.invalidate({ budgetId }),
     onError: (err) => toast.error(err.message || "Erro ao atualizar login"),
   });
 
@@ -64,7 +64,7 @@ export default function FieldDiaryAccessCard({ projectId }: { projectId: number 
       <div className="flex items-center justify-between">
         <Label className="flex items-center gap-2">
           <HardHat className="h-4 w-4" />
-          Acesso de campo (mestre/encarregado) — só lança no diário desta obra
+          Acesso de campo (mestre/encarregado) — só lança no diário deste orçamento
         </Label>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
@@ -94,7 +94,7 @@ export default function FieldDiaryAccessCard({ projectId }: { projectId: number 
             <DialogFooter>
               <Button
                 disabled={!email || password.length < 6 || createLogin.isPending}
-                onClick={() => createLogin.mutate({ projectId, email, password, name: name || undefined })}
+                onClick={() => createLogin.mutate({ budgetId, email, password, name: name || undefined })}
               >
                 Criar login
               </Button>

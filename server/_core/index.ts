@@ -224,6 +224,22 @@ async function runSafeMigrations() {
     await rawQuery(`ALTER TABLE site_diary_entries ADD COLUMN IF NOT EXISTS fieldUserId INT NULL`);
     console.log('[Migration] fieldUserId column ensured in site_diary_entries');
 
+    // O diário passou a ser POR ORÇAMENTO (não por projeto): entradas e logins
+    // de campo ganham budgetId e projectId deixa de ser obrigatório.
+    await rawQuery(`ALTER TABLE site_diary_entries ADD COLUMN IF NOT EXISTS budgetId INT NULL`);
+    await rawQuery(`ALTER TABLE site_diary_entries MODIFY COLUMN projectId INT NULL`);
+    await rawQuery(`ALTER TABLE site_diary_field_users ADD COLUMN IF NOT EXISTS budgetId INT NULL`);
+    await rawQuery(`ALTER TABLE site_diary_field_users MODIFY COLUMN projectId INT NULL`);
+    // Backfill (idempotente): registros antigos por projeto vão pro orçamento
+    // em execução daquele projeto (o de menor id, se houver mais de um).
+    await rawQuery(`UPDATE site_diary_entries SET budgetId = (
+      SELECT MIN(b.id) FROM budgets b WHERE b.projectId = site_diary_entries.projectId AND b.workStatus = 'execucao'
+    ) WHERE budgetId IS NULL AND projectId IS NOT NULL`);
+    await rawQuery(`UPDATE site_diary_field_users SET budgetId = (
+      SELECT MIN(b.id) FROM budgets b WHERE b.projectId = site_diary_field_users.projectId AND b.workStatus = 'execucao'
+    ) WHERE budgetId IS NULL AND projectId IS NOT NULL`);
+    console.log('[Migration] site diary budgetId columns ensured and backfilled');
+
   } catch (err: any) {
     console.warn('[Migration] Safe migration warning:', err?.message || err);
   }

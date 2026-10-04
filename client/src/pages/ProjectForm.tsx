@@ -10,14 +10,10 @@ import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
 import { useEffect } from "react";
-import { BookOpen } from "lucide-react";
-import ClientDiaryAccessCard from "@/components/ClientDiaryAccessCard";
-import FieldDiaryAccessCard from "@/components/FieldDiaryAccessCard";
 
 interface FormData {
   name: string;
   client: string;
-  clientId: string; // "" = nenhum vínculo
   location: string;
   description: string;
   startDate: string;
@@ -34,7 +30,6 @@ export default function ProjectForm() {
     { id: Number(id) },
     { enabled: isEditing }
   );
-  const { data: clientsList } = trpc.clients.list.useQuery();
 
   const { register, handleSubmit, reset, control, formState: { errors } } = useForm<FormData>();
 
@@ -43,7 +38,6 @@ export default function ProjectForm() {
       reset({
         name: project.name,
         client: project.client || "",
-        clientId: project.clientId ? String(project.clientId) : "none",
         location: project.location || "",
         description: project.description || "",
         startDate: project.startDate ? new Date(project.startDate).toISOString().split('T')[0] : "",
@@ -72,7 +66,6 @@ export default function ProjectForm() {
   const onSubmit = (data: FormData) => {
     const payload = {
       ...data,
-      clientId: data.clientId && data.clientId !== "none" ? Number(data.clientId) : null,
     };
     if (isEditing) {
       updateMutation.mutate({ id: Number(id), ...payload });
@@ -142,31 +135,6 @@ export default function ProjectForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="clientId">Cliente vinculado (cadastro)</Label>
-                <Controller
-                  name="clientId"
-                  control={control}
-                  defaultValue="none"
-                  render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Nenhum" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Nenhum</SelectItem>
-                        {(clientsList || []).map((c: any) => (
-                          <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Necessário pra liberar acesso do cliente ao Diário de Obras deste projeto.
-                </p>
-              </div>
-              
-              <div className="space-y-2">
                 <Label htmlFor="location">Localização</Label>
                 <Input 
                   id="location" 
@@ -216,36 +184,6 @@ export default function ProjectForm() {
           </CardContent>
         </Card>
 
-        {isEditing && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BookOpen className="h-5 w-5" />
-                Diário de Obras
-              </CardTitle>
-              <CardDescription>
-                Registros diários (clima, efetivo, atividades e fotos) deste projeto.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Link href={`/projects/${id}/diario`}>
-                <Button variant="outline" className="w-full sm:w-auto">
-                  Abrir Diário de Obras
-                </Button>
-              </Link>
-
-              <FieldDiaryAccessCard projectId={Number(id)} />
-
-              {project?.clientId ? (
-                <ClientDiaryAccessCard clientId={project.clientId} />
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Vincule um cliente do cadastro (acima) pra liberar o acesso dele ao Diário de Obras.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        )}
       </div>
     </DashboardLayout>
   );

@@ -101,15 +101,6 @@ export default function Budgets() {
   };
 
   // Agrupar orçamentos por cliente
-  // Projetos com ao menos um orçamento "Em execução" — só esses têm Diário de Obras.
-  const execProjectIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const b of budgets ?? []) {
-      if ((b as any).workStatus === "execucao" && b.project?.id) ids.add(b.project.id);
-    }
-    return ids;
-  }, [budgets]);
-
   const groupedBudgets = useMemo(() => {
     if (!budgets) return [];
     
@@ -265,8 +256,8 @@ export default function Budgets() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
-                              {budget.project?.id && execProjectIds.has(budget.project.id) ? (
-                                <Link href={`/projects/${budget.project.id}/diario`}>
+                              {(budget as any).workStatus === "execucao" ? (
+                                <Link href={`/budgets/${budget.id}/diario`}>
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -281,11 +272,7 @@ export default function Budgets() {
                                   variant="ghost"
                                   size="sm"
                                   disabled
-                                  title={
-                                    budget.project?.id
-                                      ? "Diário de Obras disponível só para obras em execução"
-                                      : "Vincule este orçamento a um projeto em execução para usar o Diário de Obras"
-                                  }
+                                  title="Diário de Obras disponível só para orçamentos em execução"
                                 >
                                   <BookOpen className="h-4 w-4" />
                                 </Button>

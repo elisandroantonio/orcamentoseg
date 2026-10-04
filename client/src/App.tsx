@@ -53,10 +53,10 @@ function Router() {
         <Route path={"/projects"} component={Projects} />
         <Route path={"/projects/new"} component={ProjectForm} />
         <Route path={"/projects/:id"} component={ProjectForm} />
-        <Route path={"/projects/:id/diario"} component={SiteDiary} />
+        <Route path={"/budgets/:id/diario"} component={SiteDiary} />
         <Route path={"/portal/login"} component={ClientPortalLogin} />
         <Route path={"/portal"} component={ClientPortalProjects} />
-        <Route path={"/portal/:projectId"} component={ClientPortalDiary} />
+        <Route path={"/portal/:budgetId"} component={ClientPortalDiary} />
         <Route path={"/campo/login"} component={FieldDiaryLogin} />
         <Route path={"/campo"} component={FieldDiary} />
         <Route path={"/budgets"} component={Budgets} />

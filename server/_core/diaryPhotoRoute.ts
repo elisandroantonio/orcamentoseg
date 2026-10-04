@@ -4,7 +4,7 @@ import { authenticateClientRequest } from "./clientAuth";
 import { authenticateFieldRequest } from "./fieldAuth";
 import { sdk } from "./sdk";
 import { rawQuery } from "../db";
-import { isProjectInExecution } from "../routers/siteDiary";
+import { isBudgetInExecution } from "../routers/siteDiary";
 
 const EXT_TO_CONTENT_TYPE: Record<string, string> = {
   jpg: "image/jpeg",
@@ -16,8 +16,8 @@ const EXT_TO_CONTENT_TYPE: Record<string, string> = {
 
 /**
  * Serve uma foto do Diário de Obras, checando permissão antes: só o dono
- * interno do projeto (equipe) ou um client_user com acesso àquele projeto
- * (clients.id == projects.clientId) podem ver. Fotos nunca são públicas —
+ * interno do orçamento (equipe), um client_user do cliente do orçamento
+ * (clients.id == budgets.clientId) ou o login de campo daquele orçamento podem ver. Fotos nunca são públicas —
  * por isso não dá pra usar express.static direto no diretório do volume.
  */
 export function registerSiteDiaryPhotoRoute(app: Express) {
@@ -26,10 +26,10 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
 
     try {
       const rows = await rawQuery(
-        `SELECT p.id as projectId, p.userId as ownerUserId, p.clientId as projectClientId
+        `SELECT b.id as budgetId, b.userId as ownerUserId, b.clientId as budgetClientId
          FROM site_diary_photos sdp
          JOIN site_diary_entries sde ON sde.id = sdp.diaryEntryId
-         JOIN projects p ON p.id = sde.projectId
+         JOIN budgets b ON b.id = sde.budgetId
          WHERE sdp.fileName = ? LIMIT 1`,
         [fileName]
       );
@@ -40,7 +40,7 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
       }
 
       // Diário só vale para obra em execução — fotos de obra fora de execução ficam indisponíveis.
-      if (!(await isProjectInExecution(row.projectId))) {
+      if (!(await isBudgetInExecution(row.budgetId))) {
         res.status(403).send("O Diário de Obras só está disponível para obras em execução.");
         return;
       }
@@ -56,7 +56,7 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
 
       if (!authorized) {
         const clientUser = await authenticateClientRequest(req);
-        if (clientUser && row.projectClientId && clientUser.clientId === row.projectClientId) {
+        if (clientUser && row.budgetClientId && clientUser.clientId === row.budgetClientId) {
           authorized = true;
         }
       }
@@ -64,7 +64,7 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
       if (!authorized) {
         // Login de campo: só vê fotos da própria obra.
         const fieldUser = await authenticateFieldRequest(req);
-        if (fieldUser && fieldUser.projectId === row.projectId) {
+        if (fieldUser && fieldUser.budgetId === row.budgetId) {
           authorized = true;
         }
       }

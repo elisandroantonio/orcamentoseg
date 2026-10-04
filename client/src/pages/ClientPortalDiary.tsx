@@ -13,11 +13,11 @@ const WEATHER_LABEL: Record<string, string> = {
 };
 
 export default function ClientPortalDiary() {
-  const { projectId } = useParams();
+  const { budgetId } = useParams();
   const [, setLocation] = useLocation();
-  const pid = Number(projectId);
+  const pid = Number(budgetId);
 
-  const { data: entries, isLoading, error } = trpc.clientPortal.listEntries.useQuery({ projectId: pid }, { retry: false });
+  const { data: entries, isLoading, error } = trpc.clientPortal.listEntries.useQuery({ budgetId: pid }, { retry: false });
 
   // Só volta pro login se a sessão caiu; obra fora de execução (FORBIDDEN) mostra aviso.
   const notLoggedIn = (error as any)?.data?.code === "UNAUTHORIZED";

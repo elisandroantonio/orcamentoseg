@@ -3,31 +3,38 @@ import { useParams, Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import DiaryEntryCard from "@/components/DiaryEntryCard";
 import DiaryEntryDialog, { type DiaryEntryPayload } from "@/components/DiaryEntryDialog";
+import FieldDiaryAccessCard from "@/components/FieldDiaryAccessCard";
+import ClientDiaryAccessCard from "@/components/ClientDiaryAccessCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, KeyRound, Plus } from "lucide-react";
 
+/**
+ * Diário de Obras de um ORÇAMENTO em execução (/budgets/:id/diario).
+ * Os acessos (login de campo e do cliente) também são geridos aqui.
+ */
 export default function SiteDiary() {
   const { id } = useParams();
-  const projectId = Number(id);
+  const budgetId = Number(id);
   const utils = trpc.useUtils();
 
-  const { data: project } = trpc.projects.get.useQuery({ id: projectId });
-  // O diário só vale para obras em execução (ver isProjectInExecution no servidor).
-  const { data: diaryStatus, isLoading: statusLoading } = trpc.siteDiary.status.useQuery({ projectId });
+  // O diário só vale para orçamentos em execução (ver isBudgetInExecution no servidor).
+  const { data: diaryStatus, isLoading: statusLoading } = trpc.siteDiary.status.useQuery({ budgetId });
   const inExecution = !!diaryStatus?.inExecution;
-  const { data: entries, isLoading } = trpc.siteDiary.list.useQuery({ projectId }, { enabled: inExecution });
-  const { data: stages } = trpc.siteDiary.listStagesForProject.useQuery({ projectId }, { enabled: inExecution });
+  const { data: entries, isLoading } = trpc.siteDiary.list.useQuery({ budgetId }, { enabled: inExecution });
+  const { data: stages } = trpc.siteDiary.listStages.useQuery({ budgetId }, { enabled: inExecution });
 
   const [formOpen, setFormOpen] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
 
   const createEntry = trpc.siteDiary.create.useMutation({
     onSuccess: () => {
       toast.success("Registro salvo");
       setFormOpen(false);
-      utils.siteDiary.list.invalidate({ projectId });
+      utils.siteDiary.list.invalidate({ budgetId });
     },
     onError: (err) => toast.error(err.message || "Erro ao salvar registro"),
   });
@@ -35,35 +42,40 @@ export default function SiteDiary() {
   const deleteEntry = trpc.siteDiary.delete.useMutation({
     onSuccess: () => {
       toast.success("Registro excluído");
-      utils.siteDiary.list.invalidate({ projectId });
+      utils.siteDiary.list.invalidate({ budgetId });
     },
     onError: (err) => toast.error(err.message || "Erro ao excluir"),
   });
 
   function handleSubmit(payload: DiaryEntryPayload) {
-    createEntry.mutate({ projectId, ...payload });
+    createEntry.mutate({ budgetId, ...payload });
   }
 
   return (
     <DashboardLayout>
       <div className="max-w-3xl mx-auto space-y-4 pb-24">
-        <div className="flex items-center gap-2">
-          <Link href={`/projects/${projectId}`}>
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-2xl font-bold">Diário de Obras</h1>
-            <p className="text-sm text-muted-foreground">{project?.name}</p>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Link href="/budgets">
+              <Button variant="ghost" size="icon">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold">Diário de Obras</h1>
+              <p className="text-sm text-muted-foreground truncate">{diaryStatus?.title}</p>
+            </div>
           </div>
+          <Button variant="outline" size="sm" onClick={() => setAccessOpen(true)}>
+            <KeyRound className="h-4 w-4 mr-1" /> Acessos
+          </Button>
         </div>
 
         {!statusLoading && !inExecution && (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
-              O Diário de Obras só está disponível para obras <strong>em execução</strong>. Mude o status de um
-              orçamento deste projeto para "Em execução" para liberar.
+              O Diário de Obras só está disponível para orçamentos <strong>em execução</strong>. Mude o status
+              deste orçamento para "Em execução" para liberar.
             </CardContent>
           </Card>
         )}
@@ -102,6 +114,27 @@ export default function SiteDiary() {
         isPending={createEntry.isPending}
         onSubmit={handleSubmit}
       />
+
+      <Dialog open={accessOpen} onOpenChange={setAccessOpen}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Acessos ao Diário de Obras</DialogTitle>
+            <DialogDescription>
+              Quem pode alimentar (campo) e quem pode acompanhar (cliente) o diário deste orçamento.
+            </DialogDescription>
+          </DialogHeader>
+
+          <FieldDiaryAccessCard budgetId={budgetId} />
+
+          {diaryStatus?.clientId ? (
+            <ClientDiaryAccessCard clientId={diaryStatus.clientId} clientName={diaryStatus.clientName ?? undefined} />
+          ) : (
+            <p className="text-sm text-muted-foreground border-t pt-4">
+              Este orçamento não tem cliente cadastrado. Defina o cliente no orçamento para liberar o acesso dele ao diário.
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

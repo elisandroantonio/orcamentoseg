@@ -21,7 +21,7 @@ import { KeyRound, Plus } from "lucide-react";
  * Projeto. O cliente nunca se autocadastra — a equipe cria o e-mail/senha
  * aqui e passa pro cliente.
  */
-export default function ClientDiaryAccessCard({ clientId }: { clientId: number }) {
+export default function ClientDiaryAccessCard({ clientId, clientName }: { clientId: number; clientName?: string }) {
   const utils = trpc.useUtils();
   const { data: logins, isLoading } = trpc.clientLogins.listLogins.useQuery({ clientId });
 
@@ -64,7 +64,7 @@ export default function ClientDiaryAccessCard({ clientId }: { clientId: number }
       <div className="flex items-center justify-between">
         <Label className="flex items-center gap-2">
           <KeyRound className="h-4 w-4" />
-          Acesso do cliente ao Diário de Obras
+          Acesso do cliente{clientName ? ` (${clientName})` : ""} — vê todas as obras dele em execução
         </Label>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>

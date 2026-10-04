@@ -53,7 +53,7 @@ export default function FieldDiary() {
           <BookOpen className="h-5 w-5 text-primary shrink-0" />
           <div className="min-w-0">
             <div className="font-semibold leading-tight">Diário de Obras</div>
-            {me?.projectName && <div className="text-xs text-muted-foreground truncate">{me.projectName}</div>}
+            {me?.budgetTitle && <div className="text-xs text-muted-foreground truncate">{me.budgetTitle}</div>}
           </div>
         </div>
         <Button variant="ghost" size="sm" onClick={handleLogout}>

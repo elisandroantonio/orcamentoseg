@@ -12,7 +12,7 @@ const laborEntrySchema = z.object({
 });
 
 const createEntrySchema = z.object({
-  projectId: z.number().int(),
+  budgetId: z.number().int(),
   entryDate: z.string(), // "YYYY-MM-DD"
   weatherMorning: z.enum(WEATHER_OPTIONS).nullable().optional(),
   weatherAfternoon: z.enum(WEATHER_OPTIONS).nullable().optional(),
@@ -25,38 +25,36 @@ const createEntrySchema = z.object({
 });
 
 /**
- * O Diário de Obras só vale para obras EM EXECUÇÃO: o projeto precisa ter
- * pelo menos um orçamento com workStatus = 'execucao'. Regra única,
- * reaproveitada pela equipe, pelo login de campo, pelo portal do cliente e
- * pela rota de fotos (ver diaryPhotoRoute.ts).
+ * O Diário de Obras é POR ORÇAMENTO e só vale para orçamentos EM EXECUÇÃO
+ * (workStatus = 'execucao'). Regra única, reaproveitada pela equipe, pelo
+ * login de campo, pelo portal do cliente e pela rota de fotos
+ * (ver diaryPhotoRoute.ts).
  */
 export const DIARY_NOT_IN_EXECUTION_MSG = "O Diário de Obras só está disponível para obras em execução.";
 
-export async function isProjectInExecution(projectId: number): Promise<boolean> {
-  const rows = await rawQuery(
-    `SELECT id FROM budgets WHERE projectId = ? AND workStatus = 'execucao' LIMIT 1`,
-    [projectId]
-  );
+export async function isBudgetInExecution(budgetId: number | null | undefined): Promise<boolean> {
+  if (!budgetId) return false;
+  const rows = await rawQuery(`SELECT id FROM budgets WHERE id = ? AND workStatus = 'execucao' LIMIT 1`, [budgetId]);
   return rows.length > 0;
 }
 
-async function assertProjectInExecution(projectId: number) {
-  if (!(await isProjectInExecution(projectId))) {
+async function assertBudgetInExecution(budgetId: number | null | undefined) {
+  if (!(await isBudgetInExecution(budgetId))) {
     throw new TRPCError({ code: "FORBIDDEN", message: DIARY_NOT_IN_EXECUTION_MSG });
   }
 }
 
-/** Garante que o projeto pertence ao usuário logado antes de ler/gravar nele. */
-async function assertProjectOwner(projectId: number, userId: number) {
-  const rows = await rawQuery(`SELECT id FROM projects WHERE id = ? AND userId = ? LIMIT 1`, [projectId, userId]);
-  if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Projeto não encontrado" });
+/** Garante que o orçamento pertence ao usuário logado antes de ler/gravar nele. */
+async function assertBudgetOwner(budgetId: number, userId: number) {
+  const rows = await rawQuery(`SELECT id FROM budgets WHERE id = ? AND userId = ? LIMIT 1`, [budgetId, userId]);
+  if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
 }
 
 async function assertEntryOwner(entryId: number, userId: number) {
   const rows = await rawQuery(
     `SELECT sde.id FROM site_diary_entries sde
-     JOIN projects p ON p.id = sde.projectId
-     WHERE sde.id = ? AND p.userId = ? LIMIT 1`,
+     JOIN budgets b ON b.id = sde.budgetId
+     WHERE sde.id = ? AND b.userId = ? LIMIT 1`,
     [entryId, userId]
   );
   if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Entrada não encontrada" });
@@ -92,11 +90,30 @@ async function loadEntriesWithDetails(entryIds: number[]) {
   }));
 }
 
+async function listEntryIdsForBudget(budgetId: number): Promise<number[]> {
+  const ids = await rawQuery(
+    `SELECT id FROM site_diary_entries WHERE budgetId = ? ORDER BY entryDate DESC, createdAt DESC`,
+    [budgetId]
+  );
+  return ids.map((r: any) => r.id);
+}
+
+async function listStagesForBudget(budgetId: number) {
+  return rawQuery(
+    `SELECT bs.id, bs.name, b.title as budgetTitle
+     FROM budget_stages bs
+     JOIN budgets b ON b.id = bs.budgetId
+     WHERE bs.budgetId = ?
+     ORDER BY bs.\`order\``,
+    [budgetId]
+  );
+}
+
 /**
  * Cria a entrada + efetivo + fotos. Usado tanto pela equipe interna quanto
  * pelo login de campo (quem chama é responsável por checar a permissão no
- * projeto ANTES de chamar). Pra login de campo, authorUserId é o dono do
- * projeto (coluna userId é NOT NULL) e fieldUserId identifica quem lançou.
+ * orçamento ANTES de chamar). Pra login de campo, authorUserId é o dono do
+ * orçamento (coluna userId é NOT NULL) e fieldUserId identifica quem lançou.
  */
 async function createEntryCore(
   input: z.infer<typeof createEntrySchema>,
@@ -104,20 +121,20 @@ async function createEntryCore(
 ) {
   if (input.budgetStageId) {
     const stageRows = await rawQuery(
-      `SELECT bs.id FROM budget_stages bs JOIN budgets b ON b.id = bs.budgetId WHERE bs.id = ? AND b.projectId = ? LIMIT 1`,
-      [input.budgetStageId, input.projectId]
+      `SELECT id FROM budget_stages WHERE id = ? AND budgetId = ? LIMIT 1`,
+      [input.budgetStageId, input.budgetId]
     );
     if (!stageRows.length) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este projeto" });
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este orçamento" });
     }
   }
 
   const result: any = await rawQuery(
     `INSERT INTO site_diary_entries
-      (projectId, userId, fieldUserId, budgetStageId, entryDate, weatherMorning, weatherAfternoon, equipmentUsed, activities, occurrences)
+      (budgetId, userId, fieldUserId, budgetStageId, entryDate, weatherMorning, weatherAfternoon, equipmentUsed, activities, occurrences)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      input.projectId,
+      input.budgetId,
       author.authorUserId,
       author.fieldUserId,
       input.budgetStageId ?? null,
@@ -155,47 +172,51 @@ async function createEntryCore(
 }
 
 export const siteDiaryRouter = router({
-  // Diz se o diário está liberado pro projeto (obra em execução) — usado pela UI.
+  // Dados do orçamento pra tela do diário + se está liberado (em execução).
   status: protectedProcedure
-    .input(z.object({ projectId: z.number().int() }))
+    .input(z.object({ budgetId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      await assertProjectOwner(input.projectId, ctx.user.id);
-      return { inExecution: await isProjectInExecution(input.projectId) };
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      const rows = await rawQuery(
+        `SELECT b.title, b.clientId, b.workStatus, c.name as clientName, p.name as projectName
+         FROM budgets b
+         LEFT JOIN clients c ON c.id = b.clientId
+         LEFT JOIN projects p ON p.id = b.projectId
+         WHERE b.id = ? LIMIT 1`,
+        [input.budgetId]
+      );
+      const b = rows[0];
+      return {
+        inExecution: b?.workStatus === "execucao",
+        title: b?.title ?? null,
+        clientId: b?.clientId ?? null,
+        clientName: b?.clientName ?? null,
+        projectName: b?.projectName ?? null,
+      };
     }),
 
-  // Lista as etapas disponíveis (de todos os orçamentos do projeto) pro seletor opcional.
-  listStagesForProject: protectedProcedure
-    .input(z.object({ projectId: z.number().int() }))
+  // Etapas do cronograma do orçamento, pro seletor opcional.
+  listStages: protectedProcedure
+    .input(z.object({ budgetId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      await assertProjectOwner(input.projectId, ctx.user.id);
-      await assertProjectInExecution(input.projectId);
-      return rawQuery(
-        `SELECT bs.id, bs.name, b.title as budgetTitle
-         FROM budget_stages bs
-         JOIN budgets b ON b.id = bs.budgetId
-         WHERE b.projectId = ?
-         ORDER BY b.title, bs.\`order\``,
-        [input.projectId]
-      );
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      await assertBudgetInExecution(input.budgetId);
+      return listStagesForBudget(input.budgetId);
     }),
 
   list: protectedProcedure
-    .input(z.object({ projectId: z.number().int() }))
+    .input(z.object({ budgetId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      await assertProjectOwner(input.projectId, ctx.user.id);
-      await assertProjectInExecution(input.projectId);
-      const ids = await rawQuery(
-        `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
-        [input.projectId]
-      );
-      return loadEntriesWithDetails(ids.map((r: any) => r.id));
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      await assertBudgetInExecution(input.budgetId);
+      return loadEntriesWithDetails(await listEntryIdsForBudget(input.budgetId));
     }),
 
   create: protectedProcedure
     .input(createEntrySchema)
     .mutation(async ({ ctx, input }) => {
-      await assertProjectOwner(input.projectId, ctx.user.id);
-      await assertProjectInExecution(input.projectId);
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      await assertBudgetInExecution(input.budgetId);
       return createEntryCore(input, { authorUserId: ctx.user.id, fieldUserId: null });
     }),
 
@@ -217,8 +238,8 @@ export const siteDiaryRouter = router({
       const rows = await rawQuery(
         `SELECT sdp.id, sdp.fileName, sde.id as entryId FROM site_diary_photos sdp
          JOIN site_diary_entries sde ON sde.id = sdp.diaryEntryId
-         JOIN projects p ON p.id = sde.projectId
-         WHERE sdp.id = ? AND p.userId = ? LIMIT 1`,
+         JOIN budgets b ON b.id = sde.budgetId
+         WHERE sdp.id = ? AND b.userId = ? LIMIT 1`,
         [input.photoId, ctx.user.id]
       );
       if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Foto não encontrada" });
@@ -244,86 +265,75 @@ export const siteDiaryRouter = router({
     }),
 });
 
-/** Verifica que o projeto pertence ao mesmo clientId do client_user logado. */
-async function assertClientProjectAccess(projectId: number, clientId: number) {
-  const rows = await rawQuery(`SELECT id FROM projects WHERE id = ? AND clientId = ? LIMIT 1`, [projectId, clientId]);
-  if (!rows.length) throw new TRPCError({ code: "FORBIDDEN", message: "Sem acesso a este projeto" });
-}
-
 /**
- * Login de campo: o projectId vem SEMPRE da sessão (ctx.fieldUser.projectId),
+ * Login de campo: o budgetId vem SEMPRE da sessão (ctx.fieldUser.budgetId),
  * nunca do input — assim o mestre da obra A não consegue lançar na obra B
  * mesmo adulterando a requisição. Só lê e cria; não edita nem exclui.
  */
 export const fieldDiaryRouter = router({
   me: fieldProcedure.query(async ({ ctx }) => {
-    const rows = await rawQuery(`SELECT id, name FROM projects WHERE id = ? LIMIT 1`, [ctx.fieldUser.projectId]);
+    const budgetId = ctx.fieldUser.budgetId;
+    const rows = budgetId ? await rawQuery(`SELECT title FROM budgets WHERE id = ? LIMIT 1`, [budgetId]) : [];
     return {
       email: ctx.fieldUser.email,
       name: ctx.fieldUser.name,
-      projectId: ctx.fieldUser.projectId,
-      projectName: rows[0]?.name ?? null,
-      inExecution: await isProjectInExecution(ctx.fieldUser.projectId),
+      budgetId,
+      budgetTitle: rows[0]?.title ?? null,
+      inExecution: await isBudgetInExecution(budgetId),
     };
   }),
 
   listStages: fieldProcedure.query(async ({ ctx }) => {
-    await assertProjectInExecution(ctx.fieldUser.projectId);
-    return rawQuery(
-      `SELECT bs.id, bs.name, b.title as budgetTitle
-       FROM budget_stages bs
-       JOIN budgets b ON b.id = bs.budgetId
-       WHERE b.projectId = ?
-       ORDER BY b.title, bs.\`order\``,
-      [ctx.fieldUser.projectId]
-    );
+    const budgetId = ctx.fieldUser.budgetId;
+    await assertBudgetInExecution(budgetId);
+    return listStagesForBudget(budgetId!);
   }),
 
   list: fieldProcedure.query(async ({ ctx }) => {
-    await assertProjectInExecution(ctx.fieldUser.projectId);
-    const ids = await rawQuery(
-      `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
-      [ctx.fieldUser.projectId]
-    );
-    return loadEntriesWithDetails(ids.map((r: any) => r.id));
+    const budgetId = ctx.fieldUser.budgetId;
+    await assertBudgetInExecution(budgetId);
+    return loadEntriesWithDetails(await listEntryIdsForBudget(budgetId!));
   }),
 
   create: fieldProcedure
-    .input(createEntrySchema.omit({ projectId: true }))
+    .input(createEntrySchema.omit({ budgetId: true }))
     .mutation(async ({ ctx, input }) => {
-      await assertProjectInExecution(ctx.fieldUser.projectId);
-      const rows = await rawQuery(`SELECT userId FROM projects WHERE id = ? LIMIT 1`, [ctx.fieldUser.projectId]);
-      if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Projeto não encontrado" });
+      const budgetId = ctx.fieldUser.budgetId;
+      await assertBudgetInExecution(budgetId);
+      const rows = await rawQuery(`SELECT userId FROM budgets WHERE id = ? LIMIT 1`, [budgetId]);
+      if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
       return createEntryCore(
-        { ...input, projectId: ctx.fieldUser.projectId },
+        { ...input, budgetId: budgetId! },
         { authorUserId: rows[0].userId, fieldUserId: ctx.fieldUser.id }
       );
     }),
 });
 
+/** Verifica que o orçamento é do mesmo cliente (clientId) do client_user logado. */
+async function assertClientBudgetAccess(budgetId: number, clientId: number) {
+  const rows = await rawQuery(`SELECT id FROM budgets WHERE id = ? AND clientId = ? LIMIT 1`, [budgetId, clientId]);
+  if (!rows.length) throw new TRPCError({ code: "FORBIDDEN", message: "Sem acesso a esta obra" });
+}
+
 export const clientPortalRouter = router({
-  listProjects: clientProcedure.query(async ({ ctx }) => {
-    // Só projetos do cliente com obra em execução (ver isProjectInExecution).
+  // Só obras (orçamentos) do cliente que estão em execução.
+  listBudgets: clientProcedure.query(async ({ ctx }) => {
     return rawQuery(
-      `SELECT p.id, p.name, p.location, p.status, p.startDate, p.endDate
-       FROM projects p
-       WHERE p.clientId = ?
-         AND EXISTS (SELECT 1 FROM budgets b WHERE b.projectId = p.id AND b.workStatus = 'execucao')
-       ORDER BY p.createdAt DESC`,
+      `SELECT b.id, b.title, b.startDate, b.endDate, p.name as projectName, p.location
+       FROM budgets b
+       LEFT JOIN projects p ON p.id = b.projectId
+       WHERE b.clientId = ? AND b.workStatus = 'execucao'
+       ORDER BY b.createdAt DESC`,
       [ctx.clientUser.clientId]
     );
   }),
 
   listEntries: clientProcedure
-    .input(z.object({ projectId: z.number().int() }))
+    .input(z.object({ budgetId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      await assertClientProjectAccess(input.projectId, ctx.clientUser.clientId);
-      await assertProjectInExecution(input.projectId);
-      const ids = await rawQuery(
-        `SELECT id FROM site_diary_entries WHERE projectId = ? ORDER BY entryDate DESC, createdAt DESC`,
-        [input.projectId]
-      );
-      return loadEntriesWithDetails(ids.map((r: any) => r.id));
+      await assertClientBudgetAccess(input.budgetId, ctx.clientUser.clientId);
+      await assertBudgetInExecution(input.budgetId);
+      return loadEntriesWithDetails(await listEntryIdsForBudget(input.budgetId));
     }),
 
   me: clientProcedure.query(async ({ ctx }) => {

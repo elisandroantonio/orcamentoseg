@@ -1498,7 +1498,9 @@ export async function touchClientUserLastSignedIn(id: number): Promise<void> {
 
 export type FieldUserRecord = {
   id: number;
-  projectId: number;
+  /** Diário por orçamento: null só em logins antigos que não casaram com nenhum orçamento em execução. */
+  budgetId: number | null;
+  projectId: number | null;
   email: string;
   passwordHash: string;
   name: string | null;
