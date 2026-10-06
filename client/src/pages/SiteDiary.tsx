@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
-import DiaryEntryCard from "@/components/DiaryEntryCard";
+import DiaryEntriesPanel from "@/components/DiaryEntriesPanel";
 import DiaryEntryDialog, { type DiaryEntryPayload } from "@/components/DiaryEntryDialog";
 import FieldDiaryAccessCard from "@/components/FieldDiaryAccessCard";
 import ClientDiaryAccessCard from "@/components/ClientDiaryAccessCard";
@@ -95,20 +95,19 @@ export default function SiteDiary() {
           </Card>
         )}
 
-        {inExecution && isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
-        {inExecution && !isLoading && (!entries || entries.length === 0) && (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              Nenhum registro ainda. Toque no botão + para criar o primeiro.
-            </CardContent>
-          </Card>
+        {inExecution && (
+          <DiaryEntriesPanel
+            entries={entries}
+            isLoading={isLoading}
+            pdfContext={{
+              title: diaryStatus?.title ?? "Obra",
+              subtitle: [diaryStatus?.clientName, diaryStatus?.projectName].filter(Boolean).join(" · ") || undefined,
+            }}
+            onEdit={setEditing}
+            onDelete={(entryId) => deleteEntry.mutate({ id: entryId })}
+            emptyMessage="Nenhum registro ainda. Toque no botão + para criar o primeiro."
+          />
         )}
-
-        <div className="space-y-3">
-          {entries?.map((entry: any) => (
-            <DiaryEntryCard key={entry.id} entry={entry} onEdit={setEditing} onDelete={(entryId) => deleteEntry.mutate({ id: entryId })} />
-          ))}
-        </div>
       </div>
 
       {/* FAB */}

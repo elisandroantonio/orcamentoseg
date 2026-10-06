@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import DiaryEntryCard from "@/components/DiaryEntryCard";
+import DiaryEntriesPanel from "@/components/DiaryEntriesPanel";
 import DiaryEntryDialog, { type DiaryEntryPayload } from "@/components/DiaryEntryDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -172,22 +172,19 @@ export default function FieldDiary() {
           </>
         )}
 
-        {selected && isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
-        {selected && !isLoading && (!entries || entries.length === 0) && (
-          <Card>
-            <CardContent className="py-8 text-center text-muted-foreground">
-              Nenhum registro ainda. Toque no botão + para criar o primeiro.
-            </CardContent>
-          </Card>
-        )}
-
-        {selected && entries?.map((entry: any) => (
-          <DiaryEntryCard
-            key={entry.id}
-            entry={entry}
-            onEdit={me && entry.fieldUserId === me.id ? setEditing : undefined}
+        {selected && (
+          <DiaryEntriesPanel
+            entries={entries}
+            isLoading={isLoading}
+            pdfContext={{
+              title: selected.title,
+              subtitle: [selected.projectName, selected.location].filter(Boolean).join(" · ") || undefined,
+            }}
+            onEdit={setEditing}
+            canEdit={(entry) => !!me && entry.fieldUserId === me.id}
+            emptyMessage="Nenhum registro ainda. Toque no botão + para criar o primeiro."
           />
-        ))}
+        )}
       </div>
 
       {selected && (

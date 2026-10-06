@@ -11,7 +11,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { CloudRain, Pencil, Sun, Trash2, Users } from "lucide-react";
+import { CloudRain, FileDown, Loader2, Pencil, Sun, Trash2, Users } from "lucide-react";
 import { WEATHER_LABEL } from "./DiaryEntryDialog";
 
 /**
@@ -22,10 +22,14 @@ export default function DiaryEntryCard({
   entry,
   onDelete,
   onEdit,
+  onPdf,
+  pdfBusy,
 }: {
   entry: any;
   onDelete?: (id: number) => void;
   onEdit?: (entry: any) => void;
+  onPdf?: (entry: any) => void;
+  pdfBusy?: boolean;
 }) {
   return (
     <Card>
@@ -38,6 +42,18 @@ export default function DiaryEntryCard({
             })()}
           </CardTitle>
           <div className="flex items-center">
+          {onPdf && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground"
+              title="Gerar PDF deste dia"
+              disabled={pdfBusy}
+              onClick={() => onPdf(entry)}
+            >
+              {pdfBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+            </Button>
+          )}
           {onEdit && (
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => onEdit(entry)}>
               <Pencil className="h-4 w-4" />
