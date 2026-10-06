@@ -38,6 +38,24 @@ export async function isBudgetInExecution(budgetId: number | null | undefined): 
   return rows.length > 0;
 }
 
+/** O login de campo está vinculado a esta obra? (tabela N:N site_diary_field_user_budgets) */
+export async function fieldUserHasBudget(fieldUserId: number, budgetId: number | null | undefined): Promise<boolean> {
+  if (!budgetId) return false;
+  const rows = await rawQuery(
+    `SELECT id FROM site_diary_field_user_budgets WHERE fieldUserId = ? AND budgetId = ? LIMIT 1`,
+    [fieldUserId, budgetId]
+  );
+  return rows.length > 0;
+}
+
+/** Vínculo com a obra + obra em execução. Chamado em TODA ação do login de campo. */
+async function assertFieldBudgetAccess(fieldUserId: number, budgetId: number) {
+  if (!(await fieldUserHasBudget(fieldUserId, budgetId))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Sem acesso a esta obra" });
+  }
+  await assertBudgetInExecution(budgetId);
+}
+
 async function assertBudgetInExecution(budgetId: number | null | undefined) {
   if (!(await isBudgetInExecution(budgetId))) {
     throw new TRPCError({ code: "FORBIDDEN", message: DIARY_NOT_IN_EXECUTION_MSG });
@@ -63,7 +81,7 @@ async function assertEntryOwner(entryId: number, userId: number) {
 async function loadEntriesWithDetails(entryIds: number[]) {
   if (!entryIds.length) return [];
   const entries = await rawQuery(
-    `SELECT sde.*, COALESCE(NULLIF(fu.name, ''), fu.email, u.name) as userName, bs.name as stageName
+    `SELECT sde.*, COALESCE(NULLIF(fu.name, ''), fu.username, fu.email, u.name) as userName, bs.name as stageName
      FROM site_diary_entries sde
      LEFT JOIN users u ON u.id = sde.userId
      LEFT JOIN site_diary_field_users fu ON fu.id = sde.fieldUserId
@@ -172,6 +190,21 @@ async function createEntryCore(
 }
 
 export const siteDiaryRouter = router({
+  // Hub do dono: todas as obras em execução (alimenta a página /diarios).
+  listExecutingBudgets: protectedProcedure.query(async ({ ctx }) => {
+    return rawQuery(
+      `SELECT b.id, b.title, p.name as projectName, p.location, c.name as clientName,
+              (SELECT COUNT(*) FROM site_diary_entries e WHERE e.budgetId = b.id) as entryCount,
+              (SELECT MAX(e.entryDate) FROM site_diary_entries e WHERE e.budgetId = b.id) as lastEntryDate
+       FROM budgets b
+       LEFT JOIN projects p ON p.id = b.projectId
+       LEFT JOIN clients c ON c.id = b.clientId
+       WHERE b.userId = ? AND b.workStatus = 'execucao'
+       ORDER BY b.title ASC`,
+      [ctx.user.id]
+    );
+  }),
+
   // Dados do orçamento pra tela do diário + se está liberado (em execução).
   status: protectedProcedure
     .input(z.object({ budgetId: z.number().int() }))
@@ -266,47 +299,55 @@ export const siteDiaryRouter = router({
 });
 
 /**
- * Login de campo: o budgetId vem SEMPRE da sessão (ctx.fieldUser.budgetId),
- * nunca do input — assim o mestre da obra A não consegue lançar na obra B
- * mesmo adulterando a requisição. Só lê e cria; não edita nem exclui.
+ * Login de campo: um login pode ter VÁRIAS obras (site_diary_field_user_budgets).
+ * O budgetId vem do input (a obra escolhida no seletor), mas TODA chamada
+ * revalida no servidor que o login está vinculado a essa obra e que ela está
+ * em execução — o mestre não consegue lançar em obra que não é dele mesmo
+ * adulterando a requisição. Só lê e cria; não edita nem exclui.
  */
 export const fieldDiaryRouter = router({
   me: fieldProcedure.query(async ({ ctx }) => {
-    const budgetId = ctx.fieldUser.budgetId;
-    const rows = budgetId ? await rawQuery(`SELECT title FROM budgets WHERE id = ? LIMIT 1`, [budgetId]) : [];
     return {
       username: ctx.fieldUser.username,
       email: ctx.fieldUser.email,
       name: ctx.fieldUser.name,
-      budgetId,
-      budgetTitle: rows[0]?.title ?? null,
-      inExecution: await isBudgetInExecution(budgetId),
     };
   }),
 
-  listStages: fieldProcedure.query(async ({ ctx }) => {
-    const budgetId = ctx.fieldUser.budgetId;
-    await assertBudgetInExecution(budgetId);
-    return listStagesForBudget(budgetId!);
+  // Obras do login que estão em execução (alimenta o seletor de obra).
+  listBudgets: fieldProcedure.query(async ({ ctx }) => {
+    return rawQuery(
+      `SELECT b.id, b.title, b.startDate, b.endDate, p.name as projectName, p.location
+       FROM site_diary_field_user_budgets fub
+       JOIN budgets b ON b.id = fub.budgetId
+       LEFT JOIN projects p ON p.id = b.projectId
+       WHERE fub.fieldUserId = ? AND b.workStatus = 'execucao'
+       ORDER BY b.title ASC`,
+      [ctx.fieldUser.id]
+    );
   }),
 
-  list: fieldProcedure.query(async ({ ctx }) => {
-    const budgetId = ctx.fieldUser.budgetId;
-    await assertBudgetInExecution(budgetId);
-    return loadEntriesWithDetails(await listEntryIdsForBudget(budgetId!));
-  }),
+  listStages: fieldProcedure
+    .input(z.object({ budgetId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertFieldBudgetAccess(ctx.fieldUser.id, input.budgetId);
+      return listStagesForBudget(input.budgetId);
+    }),
+
+  list: fieldProcedure
+    .input(z.object({ budgetId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertFieldBudgetAccess(ctx.fieldUser.id, input.budgetId);
+      return loadEntriesWithDetails(await listEntryIdsForBudget(input.budgetId));
+    }),
 
   create: fieldProcedure
-    .input(createEntrySchema.omit({ budgetId: true }))
+    .input(createEntrySchema)
     .mutation(async ({ ctx, input }) => {
-      const budgetId = ctx.fieldUser.budgetId;
-      await assertBudgetInExecution(budgetId);
-      const rows = await rawQuery(`SELECT userId FROM budgets WHERE id = ? LIMIT 1`, [budgetId]);
+      await assertFieldBudgetAccess(ctx.fieldUser.id, input.budgetId);
+      const rows = await rawQuery(`SELECT userId FROM budgets WHERE id = ? LIMIT 1`, [input.budgetId]);
       if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
-      return createEntryCore(
-        { ...input, budgetId: budgetId! },
-        { authorUserId: rows[0].userId, fieldUserId: ctx.fieldUser.id }
-      );
+      return createEntryCore(input, { authorUserId: rows[0].userId, fieldUserId: ctx.fieldUser.id });
     }),
 });
 

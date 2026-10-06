@@ -14,6 +14,7 @@ const Clients = lazy(() => import("./pages/Clients"));
 const Projects = lazy(() => import("./pages/Projects"));
 const ProjectForm = lazy(() => import("./pages/ProjectForm"));
 const SiteDiary = lazy(() => import("./pages/SiteDiary"));
+const SiteDiaryHub = lazy(() => import("./pages/SiteDiaryHub"));
 const ClientPortalLogin = lazy(() => import("./pages/ClientPortalLogin"));
 const ClientPortalProjects = lazy(() => import("./pages/ClientPortalProjects"));
 const ClientPortalDiary = lazy(() => import("./pages/ClientPortalDiary"));
@@ -53,6 +54,7 @@ function Router() {
         <Route path={"/projects"} component={Projects} />
         <Route path={"/projects/new"} component={ProjectForm} />
         <Route path={"/projects/:id"} component={ProjectForm} />
+        <Route path={"/diarios"} component={SiteDiaryHub} />
         <Route path={"/budgets/:id/diario"} component={SiteDiary} />
         <Route path={"/portal/login"} component={ClientPortalLogin} />
         <Route path={"/portal"} component={ClientPortalProjects} />

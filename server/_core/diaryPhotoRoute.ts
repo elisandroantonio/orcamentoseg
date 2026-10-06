@@ -4,7 +4,7 @@ import { authenticateClientRequest } from "./clientAuth";
 import { authenticateFieldRequest } from "./fieldAuth";
 import { sdk } from "./sdk";
 import { rawQuery } from "../db";
-import { isBudgetInExecution } from "../routers/siteDiary";
+import { isBudgetInExecution, fieldUserHasBudget } from "../routers/siteDiary";
 
 const EXT_TO_CONTENT_TYPE: Record<string, string> = {
   jpg: "image/jpeg",
@@ -64,7 +64,7 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
       if (!authorized) {
         // Login de campo: só vê fotos da própria obra.
         const fieldUser = await authenticateFieldRequest(req);
-        if (fieldUser && fieldUser.budgetId === row.budgetId) {
+        if (fieldUser && (await fieldUserHasBudget(fieldUser.id, row.budgetId))) {
           authorized = true;
         }
       }

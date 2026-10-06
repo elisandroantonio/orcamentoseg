@@ -9,7 +9,7 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, Menu, FolderKanban, Calculator, Package, ClipboardList, Tag, Users, TrendingUp, Percent, Boxes } from "lucide-react";
+import { LayoutDashboard, LogOut, Menu, FolderKanban, Calculator, Package, ClipboardList, Tag, Users, TrendingUp, Percent, Boxes, BookOpen } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -23,6 +23,7 @@ const menuItems = [
   { icon: Users, label: "Clientes", path: "/clients" },
   { icon: FolderKanban, label: "Projetos", path: "/projects" },
   { icon: Calculator, label: "Orçamentos", path: "/budgets" },
+  { icon: BookOpen, label: "Diários de Obras", path: "/diarios" },
   { icon: TrendingUp, label: "Financeiro", path: "/financeiro" },
   { icon: Percent, label: "Calculadora BDI", path: "/bdi-calculator" },
   { icon: Boxes, label: "Lista de Materiais", path: "/material-lists" },

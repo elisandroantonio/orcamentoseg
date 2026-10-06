@@ -31,9 +31,12 @@ async function assertBudgetOwner(budgetId: number, userId: number) {
   if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Orçamento não encontrado" });
 }
 
+/** O login é do usuário se estiver vinculado a ao menos uma obra dele. */
 async function assertFieldUserOwner(fieldUserId: number, userId: number) {
   const rows = await rawQuery(
-    `SELECT fu.id FROM site_diary_field_users fu JOIN budgets b ON b.id = fu.budgetId WHERE fu.id = ? AND b.userId = ? LIMIT 1`,
+    `SELECT fub.id FROM site_diary_field_user_budgets fub
+     JOIN budgets b ON b.id = fub.budgetId
+     WHERE fub.fieldUserId = ? AND b.userId = ? LIMIT 1`,
     [fieldUserId, userId]
   );
   if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Login não encontrado" });
@@ -49,9 +52,64 @@ export const fieldLoginsAdminRouter = router({
     .query(async ({ ctx, input }) => {
       await assertBudgetOwner(input.budgetId, ctx.user.id);
       return rawQuery(
-        `SELECT id, username, email, name, isActive, lastSignedIn, createdAt FROM site_diary_field_users WHERE budgetId = ? ORDER BY createdAt DESC`,
+        `SELECT fu.id, fu.username, fu.email, fu.name, fu.isActive, fu.lastSignedIn, fu.createdAt,
+                (SELECT COUNT(*) FROM site_diary_field_user_budgets x WHERE x.fieldUserId = fu.id) as budgetCount
+         FROM site_diary_field_users fu
+         JOIN site_diary_field_user_budgets fub ON fub.fieldUserId = fu.id
+         WHERE fub.budgetId = ? ORDER BY fu.createdAt DESC`,
         [input.budgetId]
       );
+    }),
+
+  // Logins do dono que ainda NÃO estão nesta obra (pra vincular um mestre existente).
+  listAvailable: protectedProcedure
+    .input(z.object({ budgetId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      return rawQuery(
+        `SELECT DISTINCT fu.id, fu.username, fu.name
+         FROM site_diary_field_users fu
+         JOIN site_diary_field_user_budgets fub ON fub.fieldUserId = fu.id
+         JOIN budgets b ON b.id = fub.budgetId AND b.userId = ?
+         WHERE fu.id NOT IN (SELECT fieldUserId FROM site_diary_field_user_budgets WHERE budgetId = ?)
+         ORDER BY fu.name, fu.username`,
+        [ctx.user.id, input.budgetId]
+      );
+    }),
+
+  assign: protectedProcedure
+    .input(z.object({ fieldUserId: z.number().int(), budgetId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      await assertFieldUserOwner(input.fieldUserId, ctx.user.id);
+      await rawQuery(
+        `INSERT IGNORE INTO site_diary_field_user_budgets (fieldUserId, budgetId) VALUES (?, ?)`,
+        [input.fieldUserId, input.budgetId]
+      );
+      return { success: true };
+    }),
+
+  // Remove o vínculo com esta obra. Não deixa tirar a última (login ficaria órfão — desative em vez disso).
+  unassign: protectedProcedure
+    .input(z.object({ fieldUserId: z.number().int(), budgetId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      await assertFieldUserOwner(input.fieldUserId, ctx.user.id);
+      const [{ n }] = await rawQuery(
+        `SELECT COUNT(*) as n FROM site_diary_field_user_budgets WHERE fieldUserId = ?`,
+        [input.fieldUserId]
+      );
+      if (Number(n) <= 1) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Este login só tem esta obra. Para bloquear o acesso, desative o login.",
+        });
+      }
+      await rawQuery(
+        `DELETE FROM site_diary_field_user_budgets WHERE fieldUserId = ? AND budgetId = ?`,
+        [input.fieldUserId, input.budgetId]
+      );
+      return { success: true };
     }),
 
   create: protectedProcedure
@@ -79,6 +137,10 @@ export const fieldLoginsAdminRouter = router({
       const result: any = await rawQuery(
         `INSERT INTO site_diary_field_users (budgetId, username, email, passwordHash, name) VALUES (?, ?, ?, ?, ?)`,
         [input.budgetId, input.username, input.email || null, passwordHash, input.name ?? null]
+      );
+      await rawQuery(
+        `INSERT IGNORE INTO site_diary_field_user_budgets (fieldUserId, budgetId) VALUES (?, ?)`,
+        [result.insertId, input.budgetId]
       );
       return { id: result.insertId };
     }),

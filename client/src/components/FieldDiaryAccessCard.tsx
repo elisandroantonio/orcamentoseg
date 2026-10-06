@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,7 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
     onSuccess: () => {
       toast.success("Login de campo criado");
       utils.fieldLogins.list.invalidate({ budgetId });
+      utils.fieldLogins.listAvailable.invalidate({ budgetId });
     },
     onError: (err) => toast.error(err.message || "Erro ao criar login"),
   });
@@ -51,12 +53,38 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
     onError: (err) => toast.error(err.message || "Erro ao atualizar login"),
   });
 
+  // Vincular um mestre que já tem login (de outra obra) a esta obra.
+  const { data: available } = trpc.fieldLogins.listAvailable.useQuery({ budgetId });
+  const [assignValue, setAssignValue] = useState<string>("");
+
+  const refreshLogins = () => {
+    utils.fieldLogins.list.invalidate({ budgetId });
+    utils.fieldLogins.listAvailable.invalidate({ budgetId });
+  };
+
+  const assign = trpc.fieldLogins.assign.useMutation({
+    onSuccess: () => {
+      toast.success("Login vinculado a esta obra");
+      setAssignValue("");
+      refreshLogins();
+    },
+    onError: (err) => toast.error(err.message || "Erro ao vincular login"),
+  });
+
+  const unassign = trpc.fieldLogins.unassign.useMutation({
+    onSuccess: () => {
+      toast.success("Login removido desta obra");
+      refreshLogins();
+    },
+    onError: (err) => toast.error(err.message || "Erro ao remover vínculo"),
+  });
+
   return (
     <div className="space-y-3 border-t pt-4">
       <div className="flex items-center justify-between">
         <Label className="flex items-center gap-2">
           <HardHat className="h-4 w-4" />
-          Acesso de campo (mestre/encarregado) — só lança no diário deste orçamento
+          Acesso de campo (mestre/encarregado) — só lança nas obras vinculadas
         </Label>
         <NewLoginDialog
           title="Criar login de campo"
@@ -74,6 +102,31 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
         Link de acesso do campo: <span className="font-mono">{typeof window !== "undefined" ? window.location.origin : ""}/campo/login</span>
       </p>
 
+      {!!available?.length && (
+        <div className="flex items-center gap-2">
+          <Select value={assignValue} onValueChange={setAssignValue}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="Vincular mestre que já tem login..." />
+            </SelectTrigger>
+            <SelectContent>
+              {available.map((a: any) => (
+                <SelectItem key={a.id} value={String(a.id)}>
+                  {a.name || a.username} ({a.username})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!assignValue || assign.isPending}
+            onClick={() => assign.mutate({ fieldUserId: Number(assignValue), budgetId })}
+          >
+            Vincular
+          </Button>
+        </div>
+      )}
+
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
 
       {!isLoading && (!logins || logins.length === 0) && (
@@ -86,7 +139,10 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
             <div key={l.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
               <div>
                 <div className="font-medium">{l.name || l.username}</div>
-                <div className="text-muted-foreground text-xs">Usuário: {l.username}{l.email ? ` · ${l.email}` : ""}</div>
+                <div className="text-muted-foreground text-xs">
+                  Usuário: {l.username}{l.email ? ` · ${l.email}` : ""}
+                  {Number(l.budgetCount) > 1 ? ` · ${l.budgetCount} obras` : ""}
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <Badge variant={l.isActive ? "default" : "secondary"}>{l.isActive ? "Ativo" : "Inativo"}</Badge>
@@ -94,6 +150,16 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
                   checked={!!l.isActive}
                   onCheckedChange={(checked) => setActive.mutate({ fieldUserId: l.id, isActive: checked })}
                 />
+                {Number(l.budgetCount) > 1 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={unassign.isPending}
+                    onClick={() => unassign.mutate({ fieldUserId: l.id, budgetId })}
+                  >
+                    Remover daqui
+                  </Button>
+                )}
                 <Dialog
                   open={resetTarget?.id === l.id}
                   onOpenChange={(open) => setResetTarget(open ? { id: l.id, username: l.username } : null)}

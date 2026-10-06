@@ -240,6 +240,21 @@ async function runSafeMigrations() {
     ) WHERE budgetId IS NULL AND projectId IS NOT NULL`);
     console.log('[Migration] site diary budgetId columns ensured and backfilled');
 
+    // Um login de campo pode acessar VÁRIAS obras (orçamentos): vínculo N:N.
+    // A coluna site_diary_field_users.budgetId continua existindo (obra
+    // "original" do login), mas a fonte de verdade do acesso é esta tabela.
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_field_user_budgets (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      fieldUserId INT NOT NULL,
+      budgetId INT NOT NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE KEY site_diary_fub_uq (fieldUserId, budgetId),
+      INDEX site_diary_fub_budget_idx (budgetId)
+    )`);
+    await rawQuery(`INSERT IGNORE INTO site_diary_field_user_budgets (fieldUserId, budgetId)
+      SELECT id, budgetId FROM site_diary_field_users WHERE budgetId IS NOT NULL`);
+    console.log('[Migration] site_diary_field_user_budgets table ensured and backfilled');
+
     // Login por USUÁRIO (nome de login) em vez de só e-mail: muita gente de
     // campo não tem e-mail. username é o identificador de login; email vira
     // opcional (só pra encaminhar o acesso). Logins antigos: username = email.
