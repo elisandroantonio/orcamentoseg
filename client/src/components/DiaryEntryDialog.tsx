@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import StagePicker from "@/components/StagePicker";
 import { Camera, Plus, X } from "lucide-react";
 
 export const WEATHER_LABEL: Record<string, string> = {
@@ -59,7 +60,7 @@ export default function DiaryEntryDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  stages?: { id: number; name: string; budgetTitle?: string | null }[];
+  stages?: { id: number; name: string; parentStageId?: number | null; budgetTitle?: string | null }[];
   isPending: boolean;
   onSubmit: (payload: DiaryEntryPayload) => void;
   /** Se informado, a janela edita esta entrada em vez de criar uma nova. */
@@ -224,15 +225,11 @@ export default function DiaryEntryDialog({
 
           <div className="space-y-1">
             <Label>Etapa do cronograma (opcional)</Label>
-            <Select value={budgetStageId} onValueChange={setBudgetStageId}>
-              <SelectTrigger><SelectValue placeholder="Nenhuma" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Nenhuma</SelectItem>
-                {stages?.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>{s.name} {s.budgetTitle ? `(${s.budgetTitle})` : ""}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <StagePicker
+              stages={stages}
+              value={budgetStageId !== "none" ? Number(budgetStageId) : null}
+              onChange={(id) => setBudgetStageId(id ? String(id) : "none")}
+            />
           </div>
 
           <div className="space-y-1">

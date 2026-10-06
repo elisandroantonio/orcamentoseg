@@ -118,7 +118,7 @@ async function listEntryIdsForBudget(budgetId: number): Promise<number[]> {
 
 async function listStagesForBudget(budgetId: number) {
   return rawQuery(
-    `SELECT bs.id, bs.name, b.title as budgetTitle
+    `SELECT bs.id, bs.name, bs.parentStageId, b.title as budgetTitle
      FROM budget_stages bs
      JOIN budgets b ON b.id = bs.budgetId
      WHERE bs.budgetId = ?
