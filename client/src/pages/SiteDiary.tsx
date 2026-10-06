@@ -47,8 +47,23 @@ export default function SiteDiary() {
     onError: (err) => toast.error(err.message || "Erro ao excluir"),
   });
 
+  const [editing, setEditing] = useState<any | null>(null);
+
+  const updateEntry = trpc.siteDiary.update.useMutation({
+    onSuccess: () => {
+      toast.success("Registro atualizado");
+      setEditing(null);
+      utils.siteDiary.list.invalidate({ budgetId });
+    },
+    onError: (err) => toast.error(err.message || "Erro ao atualizar registro"),
+  });
+
   function handleSubmit(payload: DiaryEntryPayload) {
-    createEntry.mutate({ budgetId, ...payload });
+    if (editing) {
+      updateEntry.mutate({ entryId: editing.id, ...payload, removePhotoIds: payload.removePhotoIds ?? [] });
+    } else {
+      createEntry.mutate({ budgetId, ...payload });
+    }
   }
 
   return (
@@ -91,7 +106,7 @@ export default function SiteDiary() {
 
         <div className="space-y-3">
           {entries?.map((entry: any) => (
-            <DiaryEntryCard key={entry.id} entry={entry} onDelete={(entryId) => deleteEntry.mutate({ id: entryId })} />
+            <DiaryEntryCard key={entry.id} entry={entry} onEdit={setEditing} onDelete={(entryId) => deleteEntry.mutate({ id: entryId })} />
           ))}
         </div>
       </div>
@@ -108,10 +123,16 @@ export default function SiteDiary() {
       )}
 
       <DiaryEntryDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
+        open={formOpen || !!editing}
+        onOpenChange={(o) => {
+          if (!o) {
+            setFormOpen(false);
+            setEditing(null);
+          }
+        }}
+        entry={editing}
         stages={stages as any}
-        isPending={createEntry.isPending}
+        isPending={createEntry.isPending || updateEntry.isPending}
         onSubmit={handleSubmit}
       />
 

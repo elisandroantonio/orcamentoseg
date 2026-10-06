@@ -81,7 +81,7 @@ async function assertEntryOwner(entryId: number, userId: number) {
 async function loadEntriesWithDetails(entryIds: number[]) {
   if (!entryIds.length) return [];
   const entries = await rawQuery(
-    `SELECT sde.*, COALESCE(NULLIF(fu.name, ''), fu.username, fu.email, u.name) as userName, bs.name as stageName
+    `SELECT sde.*, DATE_FORMAT(sde.entryDate, '%Y-%m-%d') as entryDate, COALESCE(NULLIF(fu.name, ''), fu.username, fu.email, u.name) as userName, bs.name as stageName
      FROM site_diary_entries sde
      LEFT JOIN users u ON u.id = sde.userId
      LEFT JOIN site_diary_field_users fu ON fu.id = sde.fieldUserId
@@ -189,13 +189,94 @@ async function createEntryCore(
   return entry;
 }
 
+const updateEntrySchema = createEntrySchema.omit({ budgetId: true }).extend({
+  entryId: z.number().int(),
+  removePhotoIds: z.array(z.number().int()).max(50).default([]),
+});
+
+/**
+ * Edita uma entrada existente: campos, efetivo (substitui tudo), remove fotos
+ * marcadas e adiciona as novas (input.photos). Quem chama já checou a permissão
+ * sobre a entrada (e devolve o budgetId dela).
+ */
+async function updateEntryCore(budgetId: number, input: z.infer<typeof updateEntrySchema>) {
+  if (input.budgetStageId) {
+    const stageRows = await rawQuery(
+      `SELECT id FROM budget_stages WHERE id = ? AND budgetId = ? LIMIT 1`,
+      [input.budgetStageId, budgetId]
+    );
+    if (!stageRows.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este orçamento" });
+    }
+  }
+
+  await rawQuery(
+    `UPDATE site_diary_entries SET budgetStageId = ?, entryDate = ?, weatherMorning = ?, weatherAfternoon = ?,
+       equipmentUsed = ?, activities = ?, occurrences = ? WHERE id = ?`,
+    [
+      input.budgetStageId ?? null,
+      input.entryDate,
+      input.weatherMorning ?? null,
+      input.weatherAfternoon ?? null,
+      input.equipmentUsed ?? null,
+      input.activities,
+      input.occurrences ?? null,
+      input.entryId,
+    ]
+  );
+
+  await rawQuery(`DELETE FROM site_diary_labor_entries WHERE diaryEntryId = ?`, [input.entryId]);
+  for (const l of input.labor) {
+    if (l.count <= 0) continue;
+    await rawQuery(`INSERT INTO site_diary_labor_entries (diaryEntryId, role, count) VALUES (?, ?, ?)`, [
+      input.entryId,
+      l.role,
+      l.count,
+    ]);
+  }
+
+  // Só remove fotos que realmente são desta entrada.
+  for (const photoId of input.removePhotoIds) {
+    const rows = await rawQuery(`SELECT fileName FROM site_diary_photos WHERE id = ? AND diaryEntryId = ? LIMIT 1`, [
+      photoId,
+      input.entryId,
+    ]);
+    if (!rows.length) continue;
+    await deleteDiaryPhoto(rows[0].fileName);
+    await rawQuery(`DELETE FROM site_diary_photos WHERE id = ?`, [photoId]);
+  }
+
+  for (const photoDataUrl of input.photos) {
+    try {
+      const fileName = await saveDiaryPhoto(photoDataUrl);
+      await rawQuery(`INSERT INTO site_diary_photos (diaryEntryId, fileName) VALUES (?, ?)`, [input.entryId, fileName]);
+    } catch (error: any) {
+      console.error("[SiteDiary] Falha ao salvar foto", error);
+      throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Falha ao salvar foto" });
+    }
+  }
+
+  const [entry] = await loadEntriesWithDetails([input.entryId]);
+  return entry;
+}
+
 export const siteDiaryRouter = router({
+  update: protectedProcedure
+    .input(updateEntrySchema)
+    .mutation(async ({ ctx, input }) => {
+      await assertEntryOwner(input.entryId, ctx.user.id);
+      const rows = await rawQuery(`SELECT budgetId FROM site_diary_entries WHERE id = ? LIMIT 1`, [input.entryId]);
+      const budgetId = rows[0].budgetId as number;
+      await assertBudgetInExecution(budgetId);
+      return updateEntryCore(budgetId, input);
+    }),
+
   // Hub do dono: todas as obras em execução (alimenta a página /diarios).
   listExecutingBudgets: protectedProcedure.query(async ({ ctx }) => {
     return rawQuery(
       `SELECT b.id, b.title, p.name as projectName, p.location, c.name as clientName,
               (SELECT COUNT(*) FROM site_diary_entries e WHERE e.budgetId = b.id) as entryCount,
-              (SELECT MAX(e.entryDate) FROM site_diary_entries e WHERE e.budgetId = b.id) as lastEntryDate
+              (SELECT DATE_FORMAT(MAX(e.entryDate), '%Y-%m-%d') FROM site_diary_entries e WHERE e.budgetId = b.id) as lastEntryDate
        FROM budgets b
        LEFT JOIN projects p ON p.id = b.projectId
        LEFT JOIN clients c ON c.id = b.clientId
@@ -308,6 +389,7 @@ export const siteDiaryRouter = router({
 export const fieldDiaryRouter = router({
   me: fieldProcedure.query(async ({ ctx }) => {
     return {
+      id: ctx.fieldUser.id,
       username: ctx.fieldUser.username,
       email: ctx.fieldUser.email,
       name: ctx.fieldUser.name,
@@ -339,6 +421,21 @@ export const fieldDiaryRouter = router({
     .query(async ({ ctx, input }) => {
       await assertFieldBudgetAccess(ctx.fieldUser.id, input.budgetId);
       return loadEntriesWithDetails(await listEntryIdsForBudget(input.budgetId));
+    }),
+
+  // O mestre só edita o que ELE mesmo lançou, em obra vinculada e em execução.
+  update: fieldProcedure
+    .input(updateEntrySchema.extend({ budgetId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertFieldBudgetAccess(ctx.fieldUser.id, input.budgetId);
+      const rows = await rawQuery(
+        `SELECT id FROM site_diary_entries WHERE id = ? AND budgetId = ? AND fieldUserId = ? LIMIT 1`,
+        [input.entryId, input.budgetId, ctx.fieldUser.id]
+      );
+      if (!rows.length) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Você só pode editar registros que você mesmo lançou" });
+      }
+      return updateEntryCore(input.budgetId, input);
     }),
 
   create: fieldProcedure

@@ -85,9 +85,24 @@ export default function FieldDiary() {
     saveLastBudget(id);
   }
 
+  const [editing, setEditing] = useState<any | null>(null);
+
+  const updateEntry = trpc.fieldDiary.update.useMutation({
+    onSuccess: () => {
+      toast.success("Registro atualizado");
+      setEditing(null);
+      utils.fieldDiary.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message || "Erro ao atualizar registro"),
+  });
+
   function handleSubmit(payload: DiaryEntryPayload) {
     if (selectedId == null) return;
-    createEntry.mutate({ ...payload, budgetId: selectedId });
+    if (editing) {
+      updateEntry.mutate({ ...payload, budgetId: selectedId, entryId: editing.id, removePhotoIds: payload.removePhotoIds ?? [] });
+    } else {
+      createEntry.mutate({ ...payload, budgetId: selectedId });
+    }
   }
 
   const hasMany = (budgets?.length ?? 0) > 1;
@@ -166,7 +181,13 @@ export default function FieldDiary() {
           </Card>
         )}
 
-        {selected && entries?.map((entry: any) => <DiaryEntryCard key={entry.id} entry={entry} />)}
+        {selected && entries?.map((entry: any) => (
+          <DiaryEntryCard
+            key={entry.id}
+            entry={entry}
+            onEdit={me && entry.fieldUserId === me.id ? setEditing : undefined}
+          />
+        ))}
       </div>
 
       {selected && (
@@ -180,10 +201,16 @@ export default function FieldDiary() {
       )}
 
       <DiaryEntryDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
+        open={formOpen || !!editing}
+        onOpenChange={(o) => {
+          if (!o) {
+            setFormOpen(false);
+            setEditing(null);
+          }
+        }}
+        entry={editing}
         stages={stages as any}
-        isPending={createEntry.isPending}
+        isPending={createEntry.isPending || updateEntry.isPending}
         onSubmit={handleSubmit}
       />
     </div>

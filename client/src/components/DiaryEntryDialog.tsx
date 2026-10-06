@@ -25,6 +25,8 @@ export type DiaryEntryPayload = {
   occurrences: string | null;
   labor: { role: string; count: number }[];
   photos: string[];
+  /** Só na edição: ids das fotos já salvas que o usuário removeu. */
+  removePhotoIds?: number[];
 };
 
 function todayIso() {
@@ -53,13 +55,18 @@ export default function DiaryEntryDialog({
   stages,
   isPending,
   onSubmit,
+  entry,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   stages?: { id: number; name: string; budgetTitle?: string | null }[];
   isPending: boolean;
   onSubmit: (payload: DiaryEntryPayload) => void;
+  /** Se informado, a janela edita esta entrada em vez de criar uma nova. */
+  entry?: any | null;
 }) {
+  const [existingPhotos, setExistingPhotos] = useState<{ id: number; url: string }[]>([]);
+  const [removedPhotoIds, setRemovedPhotoIds] = useState<number[]>([]);
   const [entryDate, setEntryDate] = useState(todayIso());
   const [weatherMorning, setWeatherMorning] = useState<string>("bom");
   const [weatherAfternoon, setWeatherAfternoon] = useState<string>("bom");
@@ -71,9 +78,32 @@ export default function DiaryEntryDialog({
   const [photos, setPhotos] = useState<{ dataUrl: string; previewUrl: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Ao abrir em modo edição, preenche com os dados da entrada.
+  useEffect(() => {
+    if (open && entry) {
+      setEntryDate(String(entry.entryDate).slice(0, 10));
+      setWeatherMorning(entry.weatherMorning || "bom");
+      setWeatherAfternoon(entry.weatherAfternoon || "bom");
+      setBudgetStageId(entry.budgetStageId ? String(entry.budgetStageId) : "none");
+      setEquipmentUsed(entry.equipmentUsed || "");
+      setActivities(entry.activities || "");
+      setOccurrences(entry.occurrences || "");
+      setLabor(
+        entry.labor?.length
+          ? entry.labor.map((l: any) => ({ role: l.role, count: String(l.count) }))
+          : [{ role: "", count: "" }]
+      );
+      setPhotos([]);
+      setExistingPhotos((entry.photos || []).map((p: any) => ({ id: p.id, url: p.url })));
+      setRemovedPhotoIds([]);
+    }
+  }, [open, entry]);
+
   // Limpa o formulário sempre que a janela fecha (salvou ou cancelou).
   useEffect(() => {
     if (!open) {
+      setExistingPhotos([]);
+      setRemovedPhotoIds([]);
       setEntryDate(todayIso());
       setWeatherMorning("bom");
       setWeatherAfternoon("bom");
@@ -115,6 +145,7 @@ export default function DiaryEntryDialog({
         .filter(l => l.role.trim() && Number(l.count) > 0)
         .map(l => ({ role: l.role.trim(), count: Number(l.count) })),
       photos: photos.map(p => p.dataUrl),
+      ...(entry ? { removePhotoIds: removedPhotoIds } : {}),
     });
   }
 
@@ -122,7 +153,7 @@ export default function DiaryEntryDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Nova entrada do diário</DialogTitle>
+          <DialogTitle>{entry ? "Editar entrada do diário" : "Nova entrada do diário"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -231,6 +262,25 @@ export default function DiaryEntryDialog({
             <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="w-full">
               <Camera className="h-4 w-4 mr-2" /> Tirar foto / escolher da galeria
             </Button>
+            {!!existingPhotos.length && (
+              <div className="grid grid-cols-4 gap-2 mt-2">
+                {existingPhotos.map(p => (
+                  <div key={p.id} className="relative">
+                    <img src={p.url} className="aspect-square w-full rounded object-cover border" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExistingPhotos(prev => prev.filter(x => x.id !== p.id));
+                        setRemovedPhotoIds(prev => [...prev, p.id]);
+                      }}
+                      className="absolute -top-1 -right-1 bg-background border rounded-full p-0.5"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             {!!photos.length && (
               <div className="grid grid-cols-4 gap-2 mt-2">
                 {photos.map((p, idx) => (
@@ -253,7 +303,7 @@ export default function DiaryEntryDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button onClick={handleSubmit} disabled={isPending}>
-            {isPending ? "Salvando..." : "Salvar registro"}
+            {isPending ? "Salvando..." : entry ? "Salvar alterações" : "Salvar registro"}
           </Button>
         </DialogFooter>
       </DialogContent>

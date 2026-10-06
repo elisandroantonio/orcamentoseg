@@ -11,21 +11,38 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { CloudRain, Sun, Trash2, Users } from "lucide-react";
+import { CloudRain, Pencil, Sun, Trash2, Users } from "lucide-react";
 import { WEATHER_LABEL } from "./DiaryEntryDialog";
 
 /**
  * Card de uma entrada do diário. Sem `onDelete`, não mostra o botão de
  * excluir (usado no login de campo, que só cria e consulta).
  */
-export default function DiaryEntryCard({ entry, onDelete }: { entry: any; onDelete?: (id: number) => void }) {
+export default function DiaryEntryCard({
+  entry,
+  onDelete,
+  onEdit,
+}: {
+  entry: any;
+  onDelete?: (id: number) => void;
+  onEdit?: (entry: any) => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">
-            {new Date(entry.entryDate + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })}
+            {(() => {
+              const [y, m, d] = String(entry.entryDate).slice(0, 10).split("-");
+              return y && m && d ? `${d}/${m}/${y}` : "Sem data";
+            })()}
           </CardTitle>
+          <div className="flex items-center">
+          {onEdit && (
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => onEdit(entry)}>
+              <Pencil className="h-4 w-4" />
+            </Button>
+          )}
           {onDelete && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -47,6 +64,7 @@ export default function DiaryEntryCard({ entry, onDelete }: { entry: any; onDele
               </AlertDialogContent>
             </AlertDialog>
           )}
+          </div>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
           {entry.stageName && <span className="rounded bg-muted px-2 py-0.5">{entry.stageName}</span>}
