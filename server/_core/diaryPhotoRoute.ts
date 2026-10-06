@@ -4,7 +4,7 @@ import { authenticateClientRequest } from "./clientAuth";
 import { authenticateFieldRequest } from "./fieldAuth";
 import { sdk } from "./sdk";
 import { rawQuery } from "../db";
-import { isBudgetInExecution, fieldUserHasBudget } from "../routers/siteDiary";
+import { isBudgetInExecution, fieldUserHasBudget, clientUserHasBudget } from "../routers/siteDiary";
 
 const EXT_TO_CONTENT_TYPE: Record<string, string> = {
   jpg: "image/jpeg",
@@ -56,7 +56,11 @@ export function registerSiteDiaryPhotoRoute(app: Express) {
 
       if (!authorized) {
         const clientUser = await authenticateClientRequest(req);
-        if (clientUser && row.budgetClientId && clientUser.clientId === row.budgetClientId) {
+        if (
+          clientUser &&
+          row.budgetClientId &&
+          (await clientUserHasBudget(clientUser.id, row.budgetClientId, row.budgetId))
+        ) {
           authorized = true;
         }
       }

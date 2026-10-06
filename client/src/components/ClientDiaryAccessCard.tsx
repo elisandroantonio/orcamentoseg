@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -22,9 +23,41 @@ import { KeyRound } from "lucide-react";
  * Projeto. O cliente nunca se autocadastra — a equipe cria o e-mail/senha
  * aqui e passa pro cliente.
  */
-export default function ClientDiaryAccessCard({ clientId, clientName }: { clientId: number; clientName?: string }) {
+export default function ClientDiaryAccessCard({
+  clientId,
+  budgetId,
+  clientName,
+}: {
+  clientId: number;
+  budgetId: number;
+  clientName?: string;
+}) {
   const utils = trpc.useUtils();
-  const { data: logins, isLoading } = trpc.clientLogins.listLogins.useQuery({ clientId });
+  const { data: logins, isLoading } = trpc.clientLogins.listLogins.useQuery({ clientId, budgetId });
+  const { data: available } = trpc.clientLogins.listAvailable.useQuery({ clientId, budgetId });
+  const [assignValue, setAssignValue] = useState("");
+
+  const refresh = () => {
+    utils.clientLogins.listLogins.invalidate({ clientId, budgetId });
+    utils.clientLogins.listAvailable.invalidate({ clientId, budgetId });
+  };
+
+  const assign = trpc.clientLogins.assign.useMutation({
+    onSuccess: () => {
+      toast.success("Login vinculado a esta obra");
+      setAssignValue("");
+      refresh();
+    },
+    onError: (err) => toast.error(err.message || "Erro ao vincular login"),
+  });
+
+  const unassign = trpc.clientLogins.unassign.useMutation({
+    onSuccess: () => {
+      toast.success("Login removido desta obra");
+      refresh();
+    },
+    onError: (err) => toast.error(err.message || "Erro ao remover vínculo"),
+  });
 
   const [resetTarget, setResetTarget] = useState<{ id: number; username: string } | null>(null);
   const [resetPassword, setResetPassword] = useState("");
@@ -32,7 +65,7 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
   const createLogin = trpc.clientLogins.createLogin.useMutation({
     onSuccess: () => {
       toast.success("Login do cliente criado");
-      utils.clientLogins.listLogins.invalidate({ clientId });
+      refresh();
     },
     onError: (err) => toast.error(err.message || "Erro ao criar login"),
   });
@@ -47,7 +80,7 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
   });
 
   const setActive = trpc.clientLogins.setActive.useMutation({
-    onSuccess: () => utils.clientLogins.listLogins.invalidate({ clientId }),
+    onSuccess: () => refresh(),
     onError: (err) => toast.error(err.message || "Erro ao atualizar login"),
   });
 
@@ -56,7 +89,7 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
       <div className="flex items-center justify-between">
         <Label className="flex items-center gap-2">
           <KeyRound className="h-4 w-4" />
-          Acesso do cliente{clientName ? ` (${clientName})` : ""} — vê todas as obras dele em execução
+          Acesso do cliente{clientName ? ` (${clientName})` : ""} — vê só as obras vinculadas
         </Label>
         <NewLoginDialog
           title="Criar login do cliente"
@@ -65,10 +98,35 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
           audience="acompanhar o Diário de Obras"
           isPending={createLogin.isPending}
           onCreate={async (v) => {
-            await createLogin.mutateAsync({ clientId, username: v.username, email: v.email || undefined, password: v.password, name: v.name || undefined });
+            await createLogin.mutateAsync({ clientId, budgetId, username: v.username, email: v.email || undefined, password: v.password, name: v.name || undefined });
           }}
         />
       </div>
+
+      {!!available?.length && (
+        <div className="flex items-center gap-2">
+          <Select value={assignValue} onValueChange={setAssignValue}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="Vincular login do cliente já existente..." />
+            </SelectTrigger>
+            <SelectContent>
+              {available.map((a: any) => (
+                <SelectItem key={a.id} value={String(a.id)}>
+                  {a.name || a.username} ({a.username})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!assignValue || assign.isPending}
+            onClick={() => assign.mutate({ clientUserId: Number(assignValue), budgetId })}
+          >
+            Vincular
+          </Button>
+        </div>
+      )}
 
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
 
@@ -90,6 +148,14 @@ export default function ClientDiaryAccessCard({ clientId, clientName }: { client
                   checked={!!l.isActive}
                   onCheckedChange={(checked) => setActive.mutate({ clientUserId: l.id, isActive: checked })}
                 />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={unassign.isPending}
+                  onClick={() => unassign.mutate({ clientUserId: l.id, budgetId })}
+                >
+                  Remover daqui
+                </Button>
                 <Dialog
                   open={resetTarget?.id === l.id}
                   onOpenChange={(open) => setResetTarget(open ? { id: l.id, username: l.username } : null)}

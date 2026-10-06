@@ -169,20 +169,71 @@ export const fieldLoginsAdminRouter = router({
  * dele e passa a senha.
  */
 export const clientPortalAdminRouter = router({
+  // Logins do cliente vinculados a ESTA obra.
   listLogins: protectedProcedure
-    .input(z.object({ clientId: z.number().int() }))
+    .input(z.object({ clientId: z.number().int(), budgetId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       await assertClientOwner(input.clientId, ctx.user.id);
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
       return rawQuery(
-        `SELECT id, username, email, name, isActive, lastSignedIn, createdAt FROM client_users WHERE clientId = ? ORDER BY createdAt DESC`,
-        [input.clientId]
+        `SELECT cu.id, cu.username, cu.email, cu.name, cu.isActive, cu.lastSignedIn, cu.createdAt
+         FROM client_users cu
+         JOIN site_diary_client_user_budgets cub ON cub.clientUserId = cu.id
+         WHERE cu.clientId = ? AND cub.budgetId = ? ORDER BY cu.createdAt DESC`,
+        [input.clientId, input.budgetId]
       );
+    }),
+
+  // Logins do cliente que ainda NÃO estão nesta obra (pra vincular um existente).
+  listAvailable: protectedProcedure
+    .input(z.object({ clientId: z.number().int(), budgetId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertClientOwner(input.clientId, ctx.user.id);
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      return rawQuery(
+        `SELECT id, username, name FROM client_users
+         WHERE clientId = ? AND id NOT IN (SELECT clientUserId FROM site_diary_client_user_budgets WHERE budgetId = ?)
+         ORDER BY name, username`,
+        [input.clientId, input.budgetId]
+      );
+    }),
+
+  assign: protectedProcedure
+    .input(z.object({ clientUserId: z.number().int(), budgetId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      // O login precisa ser do mesmo cliente do orçamento (e do dono logado).
+      const rows = await rawQuery(
+        `SELECT cu.id FROM client_users cu
+         JOIN clients c ON c.id = cu.clientId
+         JOIN budgets b ON b.clientId = cu.clientId
+         WHERE cu.id = ? AND b.id = ? AND c.userId = ? LIMIT 1`,
+        [input.clientUserId, input.budgetId, ctx.user.id]
+      );
+      if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Login não encontrado para o cliente desta obra" });
+      await rawQuery(
+        `INSERT IGNORE INTO site_diary_client_user_budgets (clientUserId, budgetId) VALUES (?, ?)`,
+        [input.clientUserId, input.budgetId]
+      );
+      return { success: true };
+    }),
+
+  unassign: protectedProcedure
+    .input(z.object({ clientUserId: z.number().int(), budgetId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      await rawQuery(
+        `DELETE FROM site_diary_client_user_budgets WHERE clientUserId = ? AND budgetId = ?`,
+        [input.clientUserId, input.budgetId]
+      );
+      return { success: true };
     }),
 
   createLogin: protectedProcedure
     .input(
       z.object({
         clientId: z.number().int(),
+        budgetId: z.number().int(),
         username: usernameSchema,
         email: optionalEmailSchema,
         password: z.string().min(6).max(100),
@@ -191,6 +242,7 @@ export const clientPortalAdminRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await assertClientOwner(input.clientId, ctx.user.id);
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
 
       const existing = await rawQuery(
         `SELECT id FROM client_users WHERE username = ? OR email = ? LIMIT 1`,
@@ -204,6 +256,10 @@ export const clientPortalAdminRouter = router({
       const result: any = await rawQuery(
         `INSERT INTO client_users (clientId, username, email, passwordHash, name) VALUES (?, ?, ?, ?, ?)`,
         [input.clientId, input.username, input.email || null, passwordHash, input.name ?? null]
+      );
+      await rawQuery(
+        `INSERT IGNORE INTO site_diary_client_user_budgets (clientUserId, budgetId) VALUES (?, ?)`,
+        [result.insertId, input.budgetId]
       );
       return { id: result.insertId };
     }),

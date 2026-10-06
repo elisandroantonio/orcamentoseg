@@ -148,7 +148,7 @@ export default function SiteDiary() {
           <FieldDiaryAccessCard budgetId={budgetId} />
 
           {diaryStatus?.clientId ? (
-            <ClientDiaryAccessCard clientId={diaryStatus.clientId} clientName={diaryStatus.clientName ?? undefined} />
+            <ClientDiaryAccessCard clientId={diaryStatus.clientId} budgetId={budgetId} clientName={diaryStatus.clientName ?? undefined} />
           ) : (
             <p className="text-sm text-muted-foreground border-t pt-4">
               Este orçamento não tem cliente cadastrado. Defina o cliente no orçamento para liberar o acesso dele ao diário.

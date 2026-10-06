@@ -255,6 +255,19 @@ async function runSafeMigrations() {
       SELECT id, budgetId FROM site_diary_field_users WHERE budgetId IS NOT NULL`);
     console.log('[Migration] site_diary_field_user_budgets table ensured and backfilled');
 
+    // Login de CLIENTE enxerga só as obras (orçamentos) vinculadas a ele —
+    // não todas as obras do cliente. Sem backfill de propósito: logins
+    // existentes precisam ser vinculados à obra em "Acessos" do diário.
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_client_user_budgets (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      clientUserId INT NOT NULL,
+      budgetId INT NOT NULL,
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE KEY site_diary_cub_uq (clientUserId, budgetId),
+      INDEX site_diary_cub_budget_idx (budgetId)
+    )`);
+    console.log('[Migration] site_diary_client_user_budgets table ensured');
+
     // Login por USUÁRIO (nome de login) em vez de só e-mail: muita gente de
     // campo não tem e-mail. username é o identificador de login; email vira
     // opcional (só pra encaminhar o acesso). Logins antigos: username = email.

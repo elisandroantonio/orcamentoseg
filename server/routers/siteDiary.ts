@@ -448,10 +448,22 @@ export const fieldDiaryRouter = router({
     }),
 });
 
-/** Verifica que o orçamento é do mesmo cliente (clientId) do client_user logado. */
-async function assertClientBudgetAccess(budgetId: number, clientId: number) {
-  const rows = await rawQuery(`SELECT id FROM budgets WHERE id = ? AND clientId = ? LIMIT 1`, [budgetId, clientId]);
-  if (!rows.length) throw new TRPCError({ code: "FORBIDDEN", message: "Sem acesso a esta obra" });
+/** O login de cliente está vinculado a esta obra (e ela é do mesmo cliente)? */
+export async function clientUserHasBudget(clientUserId: number, clientId: number, budgetId: number | null | undefined) {
+  if (!budgetId) return false;
+  const rows = await rawQuery(
+    `SELECT cub.id FROM site_diary_client_user_budgets cub
+     JOIN budgets b ON b.id = cub.budgetId
+     WHERE cub.clientUserId = ? AND cub.budgetId = ? AND b.clientId = ? LIMIT 1`,
+    [clientUserId, budgetId, clientId]
+  );
+  return rows.length > 0;
+}
+
+async function assertClientBudgetAccess(budgetId: number, clientUserId: number, clientId: number) {
+  if (!(await clientUserHasBudget(clientUserId, clientId, budgetId))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Sem acesso a esta obra" });
+  }
 }
 
 export const clientPortalRouter = router({
@@ -459,18 +471,19 @@ export const clientPortalRouter = router({
   listBudgets: clientProcedure.query(async ({ ctx }) => {
     return rawQuery(
       `SELECT b.id, b.title, b.startDate, b.endDate, p.name as projectName, p.location
-       FROM budgets b
+       FROM site_diary_client_user_budgets cub
+       JOIN budgets b ON b.id = cub.budgetId
        LEFT JOIN projects p ON p.id = b.projectId
-       WHERE b.clientId = ? AND b.workStatus = 'execucao'
+       WHERE cub.clientUserId = ? AND b.clientId = ? AND b.workStatus = 'execucao'
        ORDER BY b.createdAt DESC`,
-      [ctx.clientUser.clientId]
+      [ctx.clientUser.id, ctx.clientUser.clientId]
     );
   }),
 
   listEntries: clientProcedure
     .input(z.object({ budgetId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      await assertClientBudgetAccess(input.budgetId, ctx.clientUser.clientId);
+      await assertClientBudgetAccess(input.budgetId, ctx.clientUser.id, ctx.clientUser.clientId);
       await assertBudgetInExecution(input.budgetId);
       return loadEntriesWithDetails(await listEntryIdsForBudget(input.budgetId));
     }),
