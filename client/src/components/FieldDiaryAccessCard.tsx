@@ -81,7 +81,7 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
 
   return (
     <div className="space-y-3 border-t pt-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Label className="flex items-center gap-2">
           <HardHat className="h-4 w-4" />
           Acesso de campo (mestre/encarregado) — só lança nas obras vinculadas
@@ -99,7 +99,7 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Link de acesso do campo: <span className="font-mono">{typeof window !== "undefined" ? window.location.origin : ""}/campo/login</span>
+        Link de acesso do campo: <span className="font-mono break-all">{typeof window !== "undefined" ? window.location.origin : ""}/campo/login</span>
       </p>
 
       {!!available?.length && (
@@ -136,8 +136,8 @@ export default function FieldDiaryAccessCard({ budgetId }: { budgetId: number })
       {!!logins?.length && (
         <div className="space-y-2">
           {logins.map((l: any) => (
-            <div key={l.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-              <div>
+            <div key={l.id} className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm">
+              <div className="min-w-0 break-words">
                 <div className="font-medium">{l.name || l.username}</div>
                 <div className="text-muted-foreground text-xs">
                   Usuário: {l.username}{l.email ? ` · ${l.email}` : ""}

@@ -3,7 +3,8 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
-import { BookOpen, LogOut } from "lucide-react";
+import DiaryBrandHeader from "@/components/DiaryBrandHeader";
+import { LogOut } from "lucide-react";
 
 export default function ClientPortalProjects() {
   const [, setLocation] = useLocation();
@@ -21,18 +22,14 @@ export default function ClientPortalProjects() {
 
   return (
     <div className="min-h-screen bg-muted/20">
-      <header className="border-b bg-background px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <BookOpen className="h-5 w-5 text-primary" />
-          <span className="font-semibold">Diário de Obras</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {me && <span className="text-sm text-muted-foreground hidden sm:inline">{me.name || me.username}</span>}
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
-            <LogOut className="h-4 w-4 mr-1" /> Sair
+      <DiaryBrandHeader
+        subtitle={me ? `Olá, ${me.name || me.username}` : undefined}
+        actions={
+          <Button variant="ghost" size="sm" onClick={handleLogout} title="Sair">
+            <LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">Sair</span>
           </Button>
-        </div>
-      </header>
+        }
+      />
 
       <div className="max-w-2xl mx-auto p-4 space-y-3">
         <h1 className="text-xl font-bold">Suas obras</h1>

@@ -4,6 +4,7 @@ import DiaryEntriesPanel from "@/components/DiaryEntriesPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
+import DiaryBrandHeader from "@/components/DiaryBrandHeader";
 import { ArrowLeft } from "lucide-react";
 
 export default function ClientPortalDiary() {
@@ -23,15 +24,14 @@ export default function ClientPortalDiary() {
 
   return (
     <div className="min-h-screen bg-muted/20">
-      <header className="border-b bg-background px-4 py-3 flex items-center gap-2">
-        <Link href="/portal">
-          <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
-        </Link>
-        <div className="min-w-0">
-          <div className="font-semibold leading-tight">Diário de Obras</div>
-          {budget?.title && <div className="text-xs text-muted-foreground truncate">{budget.title}</div>}
-        </div>
-      </header>
+      <DiaryBrandHeader
+        left={
+          <Link href="/portal">
+            <Button variant="ghost" size="icon" title="Voltar às obras"><ArrowLeft className="h-4 w-4" /></Button>
+          </Link>
+        }
+        subtitle={budget?.title}
+      />
 
       <div className="max-w-2xl mx-auto p-4 space-y-3">
         {error && !notLoggedIn && (

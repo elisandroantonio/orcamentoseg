@@ -86,7 +86,7 @@ export default function ClientDiaryAccessCard({
 
   return (
     <div className="space-y-3 border-t pt-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Label className="flex items-center gap-2">
           <KeyRound className="h-4 w-4" />
           Acesso do cliente{clientName ? ` (${clientName})` : ""} — vê só as obras vinculadas
@@ -137,8 +137,8 @@ export default function ClientDiaryAccessCard({
       {!!logins?.length && (
         <div className="space-y-2">
           {logins.map((l: any) => (
-            <div key={l.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-              <div>
+            <div key={l.id} className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm">
+              <div className="min-w-0 break-words">
                 <div className="font-medium">{l.name || l.username}</div>
                 <div className="text-muted-foreground text-xs">Usuário: {l.username}{l.email ? ` · ${l.email}` : ""}</div>
               </div>

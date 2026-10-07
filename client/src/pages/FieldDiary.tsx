@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { ArrowLeftRight, BookOpen, ChevronRight, HardHat, LogOut, MapPin, Plus } from "lucide-react";
+import DiaryBrandHeader from "@/components/DiaryBrandHeader";
+import { ArrowLeftRight, ChevronRight, HardHat, LogOut, MapPin, Plus } from "lucide-react";
 
 const LAST_BUDGET_KEY = "field-diary:last-budget";
 
@@ -110,28 +111,21 @@ export default function FieldDiary() {
 
   return (
     <div className="min-h-screen bg-muted/20">
-      <header className="border-b bg-background px-4 py-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <BookOpen className="h-5 w-5 text-primary shrink-0" />
-          <div className="min-w-0">
-            <div className="font-semibold leading-tight">Diário de Obras</div>
-            {selected && <div className="text-xs text-muted-foreground truncate">{selected.title}</div>}
-            {!selected && me && (
-              <div className="text-xs text-muted-foreground truncate">{me.name || me.username}</div>
+      <DiaryBrandHeader
+        subtitle={selected ? selected.title : me ? (me.name || me.username) : undefined}
+        actions={
+          <>
+            {hasMany && selected && (
+              <Button variant="outline" size="sm" onClick={() => pickBudget(null)} title="Trocar obra">
+                <ArrowLeftRight className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">Trocar obra</span>
+              </Button>
             )}
-          </div>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {hasMany && selected && (
-            <Button variant="outline" size="sm" onClick={() => pickBudget(null)}>
-              <ArrowLeftRight className="h-4 w-4 mr-1" /> Trocar obra
+            <Button variant="ghost" size="sm" onClick={handleLogout} title="Sair">
+              <LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">Sair</span>
             </Button>
-          )}
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
-            <LogOut className="h-4 w-4 mr-1" /> Sair
-          </Button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <div className="max-w-2xl mx-auto p-4 space-y-3 pb-24">
         {budgetsLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}

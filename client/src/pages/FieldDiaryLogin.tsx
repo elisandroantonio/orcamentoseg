@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { HardHat } from "lucide-react";
+import { DiaryBrandMark } from "@/components/DiaryBrandHeader";
 
 /**
  * Login do pessoal de campo — separado do login da equipe interna e do
@@ -47,10 +47,10 @@ export default function FieldDiaryLogin() {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <HardHat className="h-6 w-6 text-primary" />
+          <div className="mx-auto mb-3">
+            <DiaryBrandMark size="lg" />
           </div>
-          <CardTitle>Diário de Obras — Campo</CardTitle>
+          <CardTitle className="sr-only">Diário de Obras — Campo</CardTitle>
           <CardDescription>Acesso para registrar o dia da obra</CardDescription>
         </CardHeader>
         <CardContent>

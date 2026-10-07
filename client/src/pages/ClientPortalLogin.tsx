@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { BookOpen } from "lucide-react";
+import { DiaryBrandMark } from "@/components/DiaryBrandHeader";
 
 /**
  * Login do portal do cliente — separado do login da equipe interna.
@@ -49,10 +49,10 @@ export default function ClientPortalLogin() {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <BookOpen className="h-6 w-6 text-primary" />
+          <div className="mx-auto mb-3">
+            <DiaryBrandMark size="lg" />
           </div>
-          <CardTitle>Diário de Obras</CardTitle>
+          <CardTitle className="sr-only">Diário de Obras</CardTitle>
           <CardDescription>Acompanhe o andamento da sua obra</CardDescription>
         </CardHeader>
         <CardContent>
