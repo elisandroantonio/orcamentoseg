@@ -81,6 +81,12 @@ export function registerFieldAuthRoutes(app: Express) {
       const passwordOk = fieldUser ? await verifyPassword(password, fieldUser.passwordHash) : false;
 
       if (!fieldUser || !fieldUser.isActive || !passwordOk) {
+        // Motivo no log do servidor (nunca a senha) — ajuda a diagnosticar "senha certa mas não entra".
+        console.warn(
+          `[FieldAuth] Login recusado para "${login}": ${
+            !fieldUser ? "usuário não encontrado" : !fieldUser.isActive ? "login inativo" : "senha não confere"
+          }`
+        );
         const elapsed = Date.now() - start;
         if (elapsed < 400) await new Promise(r => setTimeout(r, 400 - elapsed));
         res.status(401).json({ error: "Usuário ou senha incorretos." });

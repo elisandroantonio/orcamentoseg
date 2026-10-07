@@ -106,6 +106,11 @@ export function registerClientAuthRoutes(app: Express) {
       const passwordOk = clientUser ? await verifyPassword(password, clientUser.passwordHash) : false;
 
       if (!clientUser || !clientUser.isActive || !passwordOk) {
+        console.warn(
+          `[ClientAuth] Login recusado para "${login}": ${
+            !clientUser ? "usuário não encontrado" : !clientUser.isActive ? "login inativo" : "senha não confere"
+          }`
+        );
         const elapsed = Date.now() - start;
         if (elapsed < 400) await new Promise(r => setTimeout(r, 400 - elapsed));
         res.status(401).json({ error: "Usuário ou senha incorretos." });
