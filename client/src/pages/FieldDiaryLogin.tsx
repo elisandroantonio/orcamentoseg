@@ -31,6 +31,21 @@ export default function FieldDiaryLogin() {
       });
       const data = await res.json();
       if (!res.ok) {
+        // Não é login de campo? Tenta como login de cliente (portal).
+        if (res.status === 401) {
+          const alt = await fetch("/api/client-portal/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ login, password }),
+          });
+          if (alt.ok) {
+            const altData = await alt.json();
+            toast.success(`Bem-vindo, ${altData.name || altData.username}`);
+            setLocation("/portal");
+            return;
+          }
+        }
         setError(data.error || "Falha no login");
         return;
       }

@@ -33,6 +33,21 @@ export default function ClientPortalLogin() {
       });
       const data = await res.json();
       if (!res.ok) {
+        // Não é login de cliente? Tenta como login de campo (mestre/encarregado).
+        if (res.status === 401) {
+          const alt = await fetch("/api/field-diary/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ login, password }),
+          });
+          if (alt.ok) {
+            const altData = await alt.json();
+            toast.success(`Bem-vindo, ${altData.name || altData.username}`);
+            setLocation("/campo");
+            return;
+          }
+        }
         setError(data.error || "Falha no login");
         return;
       }
