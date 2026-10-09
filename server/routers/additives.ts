@@ -814,6 +814,154 @@ export const additivesRouter = router({
       };
     }),
 
+  // ── Reequilíbrio de quantitativos (crédito / acréscimo) ──────────────────────
+  // Lista os itens do orçamento ORIGINAL (com caminho Etapa › Sub-etapa) para o
+  // assistente. Serviços compostos (e seus filhos) ficam de fora por enquanto.
+  listBudgetItemsForRebalance: protectedProcedure
+    .input(z.object({ additiveId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await assertAdditiveOwner(input.additiveId, ctx.user.id);
+      const adds = await rawQuery(`SELECT budgetId FROM budget_additives WHERE id = ? LIMIT 1`, [input.additiveId]);
+      const budgetId = adds[0].budgetId ?? adds[0].budgetid;
+      const stages = await rawQuery(`SELECT id, name, parentStageId FROM budget_stages WHERE budgetId = ?`, [budgetId]);
+      const byId: Record<number, any> = {};
+      for (const st of stages) byId[st.id] = st;
+      const pathOf = (stageId: number | null) => {
+        const names: string[] = [];
+        let cur = stageId ? byId[stageId] : null;
+        let guard = 0;
+        while (cur && guard++ < 10) {
+          names.unshift(cur.name);
+          cur = cur.parentStageId ? byId[cur.parentStageId] : null;
+        }
+        return names.join(" › ");
+      };
+      const items = await rawQuery(
+        `SELECT bi.id, bi.stageId, bi.type, bi.description, bi.unit, bi.quantity, bi.unitCost
+         FROM budget_items bi
+         WHERE bi.budgetId = ? AND bi.type <> 'composite' AND bi.parentItemId IS NULL
+         ORDER BY bi.stageId, bi.\`order\`, bi.id`,
+        [budgetId]
+      );
+      return items.map((i: any) => ({
+        id: i.id,
+        stageId: i.stageId,
+        stagePath: pathOf(i.stageId),
+        type: i.type,
+        description: i.description,
+        unit: i.unit,
+        quantity: parseFloat(i.quantity || "0"),
+        unitCost: parseFloat(i.unitCost || "0"),
+      }));
+    }),
+
+  // Gera a linha de DIFERENÇA entre a quantidade orçada e a nova quantidade:
+  // negativa = crédito (supressão), positiva = acréscimo. Usa o preço unitário,
+  // as customizações de insumos, os ajustes e as flags de BDI do contrato.
+  createRebalanceItem: protectedProcedure
+    .input(z.object({
+      additiveId: z.number(),
+      budgetItemId: z.number(),
+      newQuantity: z.number().min(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await assertAdditiveOwner(input.additiveId, ctx.user.id);
+      const adds = await rawQuery(`SELECT budgetId, frozenAt FROM budget_additives WHERE id = ? LIMIT 1`, [input.additiveId]);
+      const budgetId = adds[0].budgetId ?? adds[0].budgetid;
+      if (adds[0].frozenAt ?? adds[0].frozenat) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Aditivo congelado — descongele para editar." });
+      }
+
+      const rows = await rawQuery(`SELECT * FROM budget_items WHERE id = ? AND budgetId = ? LIMIT 1`, [input.budgetItemId, budgetId]);
+      if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Item do orçamento não encontrado" });
+      const bi: any = rows[0];
+      const g = (camel: string) => bi[camel] ?? bi[camel.toLowerCase()];
+      if (g("type") === "composite" || g("parentItemId")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Serviços compostos ainda não são suportados no reequilíbrio." });
+      }
+
+      const origQty = parseFloat(g("quantity") || "0");
+      const delta = Math.round((input.newQuantity - origQty) * 1000) / 1000;
+      if (delta === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "A nova quantidade é igual à orçada — não há diferença a lançar." });
+      }
+
+      // Custos unitários: customizações de insumos do item (se houver) senão os gravados no item.
+      let mat = parseFloat(g("materialCost") || "0");
+      let lab = parseFloat(g("laborCost") || "0");
+      let eqp = parseFloat(g("equipmentCost") || "0");
+      const svc = parseFloat(g("serviceCost") || "0");
+      const oth = parseFloat(g("otherCost") || "0");
+      const custom = await rawQuery(
+        `SELECT bii.coefficient, bii.unitCost, i.type FROM budget_item_inputs bii
+         JOIN inputs i ON i.id = bii.inputId WHERE bii.budgetItemId = ?`,
+        [input.budgetItemId]
+      );
+      if (custom.length > 0) {
+        mat = 0; lab = 0; eqp = 0;
+        for (const ci of custom) {
+          const cost = Number(ci.coefficient) * Number(ci.unitCost);
+          const t = (ci.type || "").toLowerCase();
+          if (t === "material") mat += cost;
+          else if (t === "labor") lab += cost;
+          else if (t === "equipment") eqp += cost;
+        }
+      }
+      const unitCost = mat + lab + eqp + svc + oth;
+
+      // Material entra? (regra do orçamento: exclude > include override > toggle geral)
+      const bud = await rawQuery(`SELECT includeMaterial FROM budgets WHERE id = ? LIMIT 1`, [budgetId]);
+      const budgetIncludesMaterial = Number(bud[0]?.includeMaterial ?? bud[0]?.includematerial ?? 1) !== 0;
+      const exclude = Number(g("excludeMaterialOverride") ?? 0) === 1;
+      const forceInclude = Number(g("includeMaterialOverride") ?? 0) === 1;
+      const includeMaterial = exclude ? 0 : (budgetIncludesMaterial || forceInclude ? 1 : 0);
+
+      // Etapa fixa do aditivo para as linhas de reequilíbrio (cria se não existir).
+      const REB_STAGE = "Reequilíbrio de quantitativos";
+      let stageRows = await rawQuery(
+        `SELECT id FROM additive_stages WHERE additiveId = ? AND parentStageId IS NULL AND name = ? LIMIT 1`,
+        [input.additiveId, REB_STAGE]
+      );
+      let stageId: number;
+      if (stageRows.length) {
+        stageId = stageRows[0].id;
+      } else {
+        const mo = await rawQuery(
+          `SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_stages WHERE additiveId = ? AND parentStageId IS NULL`,
+          [input.additiveId]
+        );
+        const ins: any = await rawQuery(
+          `INSERT INTO additive_stages (additiveId, parentStageId, name, \`order\`) VALUES (?, NULL, ?, ?)`,
+          [input.additiveId, REB_STAGE, parseInt(mo[0]?.maxOrd || "0") + 1]
+        );
+        stageId = ins.insertId;
+      }
+
+      const mo2 = await rawQuery(
+        `SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_items WHERE additiveId = ? AND stageId = ?`,
+        [input.additiveId, stageId]
+      );
+      const tag = delta < 0 ? "Crédito" : "Acréscimo";
+      const description = `${tag} — ${g("description")} (orçado ${origQty.toLocaleString("pt-BR")} → ${input.newQuantity.toLocaleString("pt-BR")} ${g("unit")})`;
+
+      const result: any = await rawQuery(
+        `INSERT INTO additive_items
+          (additiveId, stageId, type, compositionId, description, unit, quantity,
+           materialCost, laborCost, equipmentCost, serviceCost, otherCost, unitCost, totalCost, \`order\`,
+           aplicarencargossociais, materialadjustment, laboradjustment, includematerial)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          input.additiveId, stageId, g("type") || "composition", g("compositionId") ?? null,
+          description.slice(0, 2000), g("unit"), delta,
+          mat, lab, eqp, svc, oth, unitCost, unitCost * delta, parseInt(mo2[0]?.maxOrd || "0") + 1,
+          Number(g("aplicarEncargosSociais") ?? 1), parseFloat(g("materialAdjustment") || "0"), parseFloat(g("laborAdjustment") || "0"),
+          includeMaterial,
+        ]
+      );
+      await recalcAdditiveTotals(input.additiveId);
+      return { id: result.insertId, delta, kind: delta < 0 ? "credito" : "acrescimo" };
+    }),
+
   // ── Sincronizar item do aditivo com valores do orçamento principal ────────────
   syncItemWithBudget: protectedProcedure
     .input(z.object({

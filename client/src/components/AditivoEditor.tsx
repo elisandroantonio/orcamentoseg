@@ -12,6 +12,7 @@ import {
   Settings, Layers, Search, X, SlidersHorizontal, List, Save, RotateCcw, RefreshCw
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Scale } from "lucide-react";
 
 interface AditivoEditorProps {
   additiveId: number;
@@ -130,6 +131,26 @@ export function AditivoEditor({
     otherCost: 0,
     unitCost: 0,
     compositionId: null as number | null,
+  });
+
+  // Assistente de reequilíbrio de quantitativos (crédito/acréscimo)
+  const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const [rebalanceSearch, setRebalanceSearch] = useState("");
+  const [rebalanceItem, setRebalanceItem] = useState<any | null>(null);
+  const [rebalanceNewQty, setRebalanceNewQty] = useState("");
+  const { data: rebalanceItems = [] } = trpc.additives.listBudgetItemsForRebalance.useQuery(
+    { additiveId },
+    { enabled: rebalanceOpen }
+  );
+  const createRebalance = trpc.additives.createRebalanceItem.useMutation({
+    onSuccess: (r) => {
+      utils.additives.getStages.invalidate({ additiveId });
+      utils.additives.list.invalidate();
+      toast.success(r.kind === "credito" ? "Crédito lançado no aditivo." : "Acréscimo lançado no aditivo.");
+      setRebalanceItem(null);
+      setRebalanceNewQty("");
+    },
+    onError: (e) => toast.error("Erro: " + e.message),
   });
 
   // Mutations
@@ -385,7 +406,7 @@ export function AditivoEditor({
             <td className="py-2 px-3 text-xs text-right text-gray-600">
               {formatCurrency(_bdi.labor)}
             </td>
-            <td className="py-2 px-3 text-xs text-right font-semibold text-blue-700">
+            <td className={cn("py-2 px-3 text-xs text-right font-semibold", _bdi.total < 0 ? "text-red-600" : "text-blue-700")}>
               {formatCurrency(_bdi.total)}
             </td>
             {!isFrozen && (
@@ -841,6 +862,38 @@ export function AditivoEditor({
 
   return (
     <div className="space-y-2">
+      {/* Resumo: créditos x acréscimos x saldo (só aparece se houver linhas negativas) */}
+      {(() => {
+        const all: any[] = [];
+        const walk = (st: any) => { (st.items || []).forEach((i: any) => all.push(i)); (st.children || []).forEach(walk); };
+        stages.forEach(walk);
+        const val = (i: any) => viewMode === "com-bdi"
+          ? calcItemTotalWithBdi(i, bdiMultiplier, socialCharges)
+          : ((Number(i.includeMaterial) === 0 ? 0 : (i.materialCost || 0)) + (i.laborCost || 0) + (i.equipmentCost || 0) + (i.serviceCost || 0) + (i.otherCost || 0)) * (i.quantity ?? 0);
+        const credits = all.filter(i => (i.quantity ?? 0) < 0).reduce((a, i) => a + val(i), 0);
+        const additions = all.filter(i => (i.quantity ?? 0) >= 0).reduce((a, i) => a + val(i), 0);
+        if (credits === 0) return null;
+        const balance = additions + credits;
+        return (
+          <div className="grid grid-cols-3 gap-2 mb-2 text-xs">
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+              <div className="text-red-700">Créditos (supressões)</div>
+              <div className="font-semibold text-red-700">{formatCurrency(credits)}</div>
+            </div>
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2">
+              <div className="text-blue-700">Acréscimos</div>
+              <div className="font-semibold text-blue-700">{formatCurrency(additions)}</div>
+            </div>
+            <div className={cn("rounded-md border px-3 py-2", balance < 0 ? "border-red-300 bg-red-50" : "border-emerald-300 bg-emerald-50")}>
+              <div className={balance < 0 ? "text-red-700" : "text-emerald-700"}>
+                {balance < 0 ? "Saldo a favor do cliente" : "Saldo a cobrar"}
+              </div>
+              <div className={cn("font-semibold", balance < 0 ? "text-red-700" : "text-emerald-700")}>{formatCurrency(balance)}</div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Botão adicionar etapa */}
       {!isFrozen && (
         <div className="flex justify-between mb-2">
@@ -853,12 +906,21 @@ export function AditivoEditor({
             <RefreshCw className={cn("h-3.5 w-3.5", syncAll.isPending && "animate-spin")} />
             {syncAll.isPending ? "Sincronizando..." : "Sincronizar com Orçamento"}
           </Button>
-          <Button
-            size="sm" variant="outline" className="h-7 text-xs gap-1"
-            onClick={() => setAddStageDialog({ open: true, parentId: null })}
-          >
-            <Plus className="h-3.5 w-3.5" /> Adicionar Etapa
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm" variant="outline" className="h-7 text-xs gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
+              onClick={() => setRebalanceOpen(true)}
+              title="Lança a diferença entre a quantidade orçada e a nova quantidade (crédito ou acréscimo)"
+            >
+              <Scale className="h-3.5 w-3.5" /> Reequilibrar quantitativo
+            </Button>
+            <Button
+              size="sm" variant="outline" className="h-7 text-xs gap-1"
+              onClick={() => setAddStageDialog({ open: true, parentId: null })}
+            >
+              <Plus className="h-3.5 w-3.5" /> Adicionar Etapa
+            </Button>
+          </div>
         </div>
       )}
 
@@ -874,6 +936,87 @@ export function AditivoEditor({
           {stages.map((stage: any, idx: number) => renderStage(stage, idx))}
         </div>
       )}
+
+      {/* Dialog: Reequilíbrio de quantitativos */}
+      <Dialog open={rebalanceOpen} onOpenChange={(open) => { if (!open) { setRebalanceOpen(false); setRebalanceItem(null); setRebalanceSearch(""); setRebalanceNewQty(""); } }}>
+        <DialogContent className="max-w-lg w-[95vw] max-h-[90vh] overflow-y-auto overflow-x-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Reequilibrar quantitativo</DialogTitle>
+          </DialogHeader>
+          {!rebalanceItem ? (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500">Escolha o item do orçamento original. O sistema lança só a diferença: crédito se a nova quantidade for menor, acréscimo se for maior.</p>
+              <Input placeholder="Buscar item ou etapa..." value={rebalanceSearch} onChange={e => setRebalanceSearch(e.target.value)} className="h-8 text-xs" />
+              <div className="max-h-[50vh] overflow-y-auto border rounded-md divide-y">
+                {rebalanceItems
+                  .filter((i: any) => {
+                    const q = rebalanceSearch.trim().toLowerCase();
+                    return !q || i.description.toLowerCase().includes(q) || (i.stagePath || "").toLowerCase().includes(q);
+                  })
+                  .slice(0, 200)
+                  .map((i: any) => (
+                    <button
+                      key={i.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                      onClick={() => { setRebalanceItem(i); setRebalanceNewQty(String(i.quantity)); }}
+                    >
+                      <div className="text-[10px] text-gray-400">{i.stagePath || "Sem etapa"}</div>
+                      <div className="text-xs text-gray-800">{i.description}</div>
+                      <div className="text-[11px] text-gray-500">Orçado: {i.quantity.toLocaleString("pt-BR")} {i.unit}</div>
+                    </button>
+                  ))}
+                {!rebalanceItems.length && <div className="p-4 text-center text-xs text-gray-400">Carregando itens do orçamento...</div>}
+              </div>
+            </div>
+          ) : (() => {
+            const newQty = parseFloat(rebalanceNewQty.replace(",", "."));
+            const valid = !isNaN(newQty) && newQty >= 0;
+            const delta = valid ? Math.round((newQty - rebalanceItem.quantity) * 1000) / 1000 : 0;
+            const preview = delta * rebalanceItem.unitCost;
+            return (
+              <div className="space-y-3">
+                <div className="rounded-md bg-gray-50 border p-2">
+                  <div className="text-[10px] text-gray-400">{rebalanceItem.stagePath}</div>
+                  <div className="text-xs text-gray-800">{rebalanceItem.description}</div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs text-gray-600">Quantidade orçada</Label>
+                    <div className="h-8 mt-1 flex items-center text-xs font-semibold">{rebalanceItem.quantity.toLocaleString("pt-BR")} {rebalanceItem.unit}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-gray-600">Nova quantidade ({rebalanceItem.unit})</Label>
+                    <Input type="number" step="0.01" min={0} value={rebalanceNewQty} onChange={e => setRebalanceNewQty(e.target.value)} className="h-8 text-xs mt-1" autoFocus />
+                  </div>
+                </div>
+                {valid && delta !== 0 && (
+                  <div className={cn("rounded-md border px-3 py-2 text-xs", delta < 0 ? "border-red-200 bg-red-50 text-red-700" : "border-blue-200 bg-blue-50 text-blue-700")}>
+                    {delta < 0 ? "Crédito" : "Acréscimo"} de <b>{Math.abs(delta).toLocaleString("pt-BR")} {rebalanceItem.unit}</b>
+                    {" "}(≈ {formatCurrency(preview)} sem BDI — o valor com BDI aparece na lista após lançar).
+                  </div>
+                )}
+                {valid && delta === 0 && <div className="text-xs text-gray-500">A nova quantidade é igual à orçada — nada a lançar.</div>}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            {rebalanceItem ? (
+              <>
+                <Button variant="outline" onClick={() => setRebalanceItem(null)}>Voltar</Button>
+                <Button
+                  disabled={createRebalance.isPending || isNaN(parseFloat(rebalanceNewQty.replace(",", "."))) || parseFloat(rebalanceNewQty.replace(",", ".")) === rebalanceItem.quantity}
+                  onClick={() => createRebalance.mutate({ additiveId, budgetItemId: rebalanceItem.id, newQuantity: parseFloat(rebalanceNewQty.replace(",", ".")) })}
+                >
+                  {createRebalance.isPending ? "Lançando..." : "Lançar diferença"}
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" onClick={() => setRebalanceOpen(false)}>Fechar</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog: Adicionar etapa */}
       <Dialog open={addStageDialog.open} onOpenChange={(open) => !open && setAddStageDialog({ open: false, parentId: null })}>
@@ -1131,7 +1274,6 @@ export function AditivoEditor({
                     value={editItemForm.quantity}
                     onChange={e => setEditItemForm(prev => ({ ...prev, quantity: parseFloat(e.target.value) || 0 }))}
                     className="h-8 text-xs mt-1"
-                    min={0}
                     step={0.01}
                   />
                 </div>
