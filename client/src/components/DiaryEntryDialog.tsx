@@ -20,7 +20,7 @@ export type DiaryEntryPayload = {
   entryDate: string;
   weatherMorning: any;
   weatherAfternoon: any;
-  budgetStageId: number | null;
+  budgetStageIds: number[];
   equipmentUsed: string | null;
   activities: string;
   occurrences: string | null;
@@ -71,7 +71,7 @@ export default function DiaryEntryDialog({
   const [entryDate, setEntryDate] = useState(todayIso());
   const [weatherMorning, setWeatherMorning] = useState<string>("bom");
   const [weatherAfternoon, setWeatherAfternoon] = useState<string>("bom");
-  const [budgetStageId, setBudgetStageId] = useState<string>("none");
+  const [stageIds, setStageIds] = useState<(number | null)[]>([null]);
   const [equipmentUsed, setEquipmentUsed] = useState("");
   const [activities, setActivities] = useState("");
   const [occurrences, setOccurrences] = useState("");
@@ -85,7 +85,7 @@ export default function DiaryEntryDialog({
       setEntryDate(String(entry.entryDate).slice(0, 10));
       setWeatherMorning(entry.weatherMorning || "bom");
       setWeatherAfternoon(entry.weatherAfternoon || "bom");
-      setBudgetStageId(entry.budgetStageId ? String(entry.budgetStageId) : "none");
+      setStageIds(entry.stages?.length ? entry.stages.map((x: any) => x.id) : [null]);
       setEquipmentUsed(entry.equipmentUsed || "");
       setActivities(entry.activities || "");
       setOccurrences(entry.occurrences || "");
@@ -108,7 +108,7 @@ export default function DiaryEntryDialog({
       setEntryDate(todayIso());
       setWeatherMorning("bom");
       setWeatherAfternoon("bom");
-      setBudgetStageId("none");
+      setStageIds([null]);
       setEquipmentUsed("");
       setActivities("");
       setOccurrences("");
@@ -138,7 +138,7 @@ export default function DiaryEntryDialog({
       entryDate,
       weatherMorning: weatherMorning as any,
       weatherAfternoon: weatherAfternoon as any,
-      budgetStageId: budgetStageId !== "none" ? Number(budgetStageId) : null,
+      budgetStageIds: Array.from(new Set(stageIds.filter((x): x is number => !!x))),
       equipmentUsed: equipmentUsed || null,
       activities,
       occurrences: occurrences || null,
@@ -224,12 +224,32 @@ export default function DiaryEntryDialog({
           </div>
 
           <div className="space-y-1">
-            <Label>Etapa do cronograma (opcional)</Label>
-            <StagePicker
-              stages={stages}
-              value={budgetStageId !== "none" ? Number(budgetStageId) : null}
-              onChange={(id) => setBudgetStageId(id ? String(id) : "none")}
-            />
+            <Label>Etapas do cronograma (opcional)</Label>
+            <div className="space-y-2">
+              {stageIds.map((sid, idx) => (
+                <div key={idx} className="flex gap-2 items-start">
+                  <div className="flex-1 min-w-0">
+                    <StagePicker
+                      stages={stages}
+                      value={sid}
+                      onChange={(id) => setStageIds(prev => prev.map((v, i) => i === idx ? (id ?? null) : v))}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setStageIds(prev => prev.filter((_, i) => i !== idx))}
+                    disabled={stageIds.length === 1}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              <Button type="button" variant="outline" size="sm" onClick={() => setStageIds(prev => [...prev, null])}>
+                <Plus className="h-4 w-4 mr-1" /> Adicionar etapa
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-1">

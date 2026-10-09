@@ -203,6 +203,18 @@ async function runSafeMigrations() {
     )`);
     console.log('[Migration] site_diary_photos table ensured');
 
+    // Uma entrada do diário pode ter VÁRIAS etapas do cronograma (frentes simultâneas).
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_entry_stages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      diaryEntryId INT NOT NULL,
+      budgetStageId INT NOT NULL,
+      UNIQUE KEY site_diary_entry_stages_unique (diaryEntryId, budgetStageId),
+      INDEX site_diary_entry_stages_stage_idx (budgetStageId)
+    )`);
+    await rawQuery(`INSERT IGNORE INTO site_diary_entry_stages (diaryEntryId, budgetStageId)
+      SELECT id, budgetStageId FROM site_diary_entries WHERE budgetStageId IS NOT NULL`);
+    console.log('[Migration] site_diary_entry_stages table ensured');
+
     // Diário de Obras — login de campo por obra (ver server/_core/fieldAuth.ts)
     await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_field_users (
       id INT AUTO_INCREMENT PRIMARY KEY,

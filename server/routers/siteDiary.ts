@@ -17,7 +17,7 @@ const createEntrySchema = z.object({
   weatherMorning: z.enum(WEATHER_OPTIONS).nullable().optional(),
   weatherAfternoon: z.enum(WEATHER_OPTIONS).nullable().optional(),
   equipmentUsed: z.string().trim().max(2000).nullable().optional(),
-  budgetStageId: z.number().int().nullable().optional(),
+  budgetStageIds: z.array(z.number().int()).max(15).default([]),
   activities: z.string().trim().min(1).max(5000),
   occurrences: z.string().trim().max(5000).nullable().optional(),
   labor: z.array(laborEntrySchema).max(30).default([]),
@@ -81,11 +81,10 @@ async function assertEntryOwner(entryId: number, userId: number) {
 async function loadEntriesWithDetails(entryIds: number[]) {
   if (!entryIds.length) return [];
   const entries = await rawQuery(
-    `SELECT sde.*, DATE_FORMAT(sde.entryDate, '%Y-%m-%d') as entryDate, COALESCE(NULLIF(fu.name, ''), fu.username, fu.email, u.name) as userName, bs.name as stageName
+    `SELECT sde.*, DATE_FORMAT(sde.entryDate, '%Y-%m-%d') as entryDate, COALESCE(NULLIF(fu.name, ''), fu.username, fu.email, u.name) as userName
      FROM site_diary_entries sde
      LEFT JOIN users u ON u.id = sde.userId
      LEFT JOIN site_diary_field_users fu ON fu.id = sde.fieldUserId
-     LEFT JOIN budget_stages bs ON bs.id = sde.budgetStageId
      WHERE sde.id IN (${entryIds.map(() => "?").join(",")})
      ORDER BY sde.entryDate DESC, sde.createdAt DESC`,
     entryIds
@@ -94,18 +93,54 @@ async function loadEntriesWithDetails(entryIds: number[]) {
     `SELECT * FROM site_diary_labor_entries WHERE diaryEntryId IN (${entryIds.map(() => "?").join(",")})`,
     entryIds
   );
+  const stageRows = await rawQuery(
+    `SELECT ses.diaryEntryId, bs.id, bs.name
+     FROM site_diary_entry_stages ses
+     JOIN budget_stages bs ON bs.id = ses.budgetStageId
+     WHERE ses.diaryEntryId IN (${entryIds.map(() => "?").join(",")})
+     ORDER BY ses.id ASC`,
+    entryIds
+  );
   const photos = await rawQuery(
     `SELECT * FROM site_diary_photos WHERE diaryEntryId IN (${entryIds.map(() => "?").join(",")}) ORDER BY createdAt ASC`,
     entryIds
   );
 
-  return entries.map((entry: any) => ({
+  return entries.map((entry: any) => {
+    const stages = stageRows
+      .filter((r: any) => r.diaryEntryId === entry.id)
+      .map((r: any) => ({ id: r.id, name: r.name }));
+    return {
     ...entry,
+    stages,
+    // Compatibilidade (cards/PDF antigos): nomes juntos por vírgula.
+    stageName: stages.length ? stages.map((x: any) => x.name).join(", ") : null,
     labor: labor.filter((l: any) => l.diaryEntryId === entry.id),
     photos: photos
       .filter((p: any) => p.diaryEntryId === entry.id)
       .map((p: any) => ({ ...p, url: `/api/site-diary/photos/${p.fileName}` })),
-  }));
+    };
+  });
+}
+
+/** Valida que todas as etapas pertencem ao orçamento e grava o vínculo N:N da entrada. */
+async function saveEntryStages(entryId: number, budgetId: number, stageIds: number[]) {
+  const ids = Array.from(new Set(stageIds));
+  if (ids.length) {
+    const rows = await rawQuery(
+      `SELECT id FROM budget_stages WHERE budgetId = ? AND id IN (${ids.map(() => "?").join(",")})`,
+      [budgetId, ...ids]
+    );
+    if (rows.length !== ids.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este orçamento" });
+    }
+  }
+  await rawQuery(`DELETE FROM site_diary_entry_stages WHERE diaryEntryId = ?`, [entryId]);
+  for (const id of ids) {
+    await rawQuery(`INSERT INTO site_diary_entry_stages (diaryEntryId, budgetStageId) VALUES (?, ?)`, [entryId, id]);
+  }
+  // Coluna antiga mantida com a primeira etapa (compatibilidade).
+  await rawQuery(`UPDATE site_diary_entries SET budgetStageId = ? WHERE id = ?`, [ids[0] ?? null, entryId]);
 }
 
 async function listEntryIdsForBudget(budgetId: number): Promise<number[]> {
@@ -137,12 +172,14 @@ async function createEntryCore(
   input: z.infer<typeof createEntrySchema>,
   author: { authorUserId: number; fieldUserId: number | null }
 ) {
-  if (input.budgetStageId) {
-    const stageRows = await rawQuery(
-      `SELECT id FROM budget_stages WHERE id = ? AND budgetId = ? LIMIT 1`,
-      [input.budgetStageId, input.budgetId]
+  // Valida as etapas ANTES de gravar a entrada (não deixa entrada pela metade).
+  if (input.budgetStageIds.length) {
+    const ids = Array.from(new Set(input.budgetStageIds));
+    const rows = await rawQuery(
+      `SELECT id FROM budget_stages WHERE budgetId = ? AND id IN (${ids.map(() => "?").join(",")})`,
+      [input.budgetId, ...ids]
     );
-    if (!stageRows.length) {
+    if (rows.length !== ids.length) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este orçamento" });
     }
   }
@@ -155,7 +192,7 @@ async function createEntryCore(
       input.budgetId,
       author.authorUserId,
       author.fieldUserId,
-      input.budgetStageId ?? null,
+      null,
       input.entryDate,
       input.weatherMorning ?? null,
       input.weatherAfternoon ?? null,
@@ -165,6 +202,7 @@ async function createEntryCore(
     ]
   );
   const entryId = result.insertId;
+  await saveEntryStages(entryId, input.budgetId, input.budgetStageIds);
 
   for (const l of input.labor) {
     if (l.count <= 0) continue;
@@ -200,21 +238,12 @@ const updateEntrySchema = createEntrySchema.omit({ budgetId: true }).extend({
  * sobre a entrada (e devolve o budgetId dela).
  */
 async function updateEntryCore(budgetId: number, input: z.infer<typeof updateEntrySchema>) {
-  if (input.budgetStageId) {
-    const stageRows = await rawQuery(
-      `SELECT id FROM budget_stages WHERE id = ? AND budgetId = ? LIMIT 1`,
-      [input.budgetStageId, budgetId]
-    );
-    if (!stageRows.length) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa inválida para este orçamento" });
-    }
-  }
+  await saveEntryStages(input.entryId, budgetId, input.budgetStageIds);
 
   await rawQuery(
-    `UPDATE site_diary_entries SET budgetStageId = ?, entryDate = ?, weatherMorning = ?, weatherAfternoon = ?,
+    `UPDATE site_diary_entries SET entryDate = ?, weatherMorning = ?, weatherAfternoon = ?,
        equipmentUsed = ?, activities = ?, occurrences = ? WHERE id = ?`,
     [
-      input.budgetStageId ?? null,
       input.entryDate,
       input.weatherMorning ?? null,
       input.weatherAfternoon ?? null,

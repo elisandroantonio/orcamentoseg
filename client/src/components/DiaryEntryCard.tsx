@@ -83,7 +83,7 @@ export default function DiaryEntryCard({
           </div>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-          {entry.stageName && <span className="rounded bg-muted px-2 py-0.5">{entry.stageName}</span>}
+          {(entry.stages ?? []).map((st: any) => <span key={st.id} className="rounded bg-muted px-2 py-0.5">{st.name}</span>)}
           {entry.weatherMorning && (
             <span className="flex items-center gap-1">
               {entry.weatherMorning === "chuva" ? <CloudRain className="h-3 w-3" /> : <Sun className="h-3 w-3" />}

@@ -63,7 +63,7 @@ export function summarizeEntries(entries: any[]): DiarySummary {
     const date = String(e.entryDate).slice(0, 10);
     dates.add(date);
     photos += e.photos?.length ?? 0;
-    if (e.stageName) stages.add(e.stageName);
+    for (const st of e.stages ?? []) stages.add(st.name);
     if (e.occurrences) occurrences.push({ date, text: e.occurrences });
     for (const w of [e.weatherMorning, e.weatherAfternoon]) {
       if (w === "chuva") rainy.add(date);
@@ -334,7 +334,7 @@ async function drawEntry(c: Cursor, e: any, photosPerRow: number, photoMaxH: num
   c.doc.text(`${isoToBr(e.entryDate)} — ${weekdayName(e.entryDate)}`, MARGIN, c.y);
   c.y += 5;
 
-  const meta = [weatherText(e), e.stageName ? `Etapa: ${e.stageName}` : null, e.userName ? `Registrado por ${e.userName}` : null]
+  const meta = [weatherText(e), e.stages?.length ? `${e.stages.length > 1 ? "Etapas" : "Etapa"}: ${e.stages.map((x: any) => x.name).join("; ")}` : null, e.userName ? `Registrado por ${e.userName}` : null]
     .filter(Boolean)
     .join("   ·   ");
   if (meta) writeParagraph(c, meta, { size: 8.5 });
