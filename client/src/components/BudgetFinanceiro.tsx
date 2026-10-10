@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Trash2, ChevronDown, ChevronRight, Lock, Unlock, Save, AlertCircle, FileText, TrendingUp, Download, Loader2 } from "lucide-react";
+import { Pencil, Plus, Trash2, ChevronDown, ChevronRight, Lock, Unlock, Save, AlertCircle, FileText, TrendingUp, Download, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { exportBoletimPDF } from "@/lib/boletimPdf";
 import type { BoletimData, BoletimItemRow, BoletimAdditiveSection } from "@/lib/boletimPdf";
@@ -1029,6 +1029,8 @@ export function BudgetFinanceiro({
   const [activeTab, setActiveTab] = useState<"original" | number>("original");
   const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
   const [newPeriodForm, setNewPeriodForm] = useState({ name: "", startDate: "", endDate: "" });
+  const [showEditPeriodDialog, setShowEditPeriodDialog] = useState(false);
+  const [editPeriodForm, setEditPeriodForm] = useState({ name: "", startDate: "", endDate: "", notes: "" });
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   // true quando a aba de medição atual (orçamento original ou aditivo) tem
   // % digitados que ainda não foram salvos com "Salvar Medições" — usado pra
@@ -1071,7 +1073,7 @@ export function BudgetFinanceiro({
   });
 
   const updatePeriod = trpc.measurements.updatePeriod.useMutation({
-    onSuccess: () => { refetchPeriods(); toast.success("Período atualizado!"); },
+    onSuccess: () => { refetchPeriods(); setShowEditPeriodDialog(false); toast.success("Período atualizado!"); },
     onError: (e) => toast.error("Erro: " + e.message),
   });
 
@@ -1690,6 +1692,26 @@ export function BudgetFinanceiro({
         )}
 
         {selectedPeriod && (
+          <Button type="button" size="sm" variant="outline" className="h-8 text-xs gap-1"
+            onClick={() => {
+              const toIso = (v: any) => {
+                if (!v) return "";
+                if (typeof v === "string") return v.slice(0, 10);
+                try { return new Date(v).toISOString().slice(0, 10); } catch { return ""; }
+              };
+              setEditPeriodForm({
+                name: selectedPeriod.name || "",
+                startDate: toIso((selectedPeriod as any).startDate),
+                endDate: toIso((selectedPeriod as any).endDate),
+                notes: (selectedPeriod as any).notes || "",
+              });
+              setShowEditPeriodDialog(true);
+            }}>
+            <Pencil className="w-3 h-3" /> Editar Período
+          </Button>
+        )}
+
+        {selectedPeriod && (
           <Button type="button" size="sm" variant="outline" className="h-8 text-xs gap-1 text-red-600 border-red-200"
             onClick={() => { if (confirm("Excluir este período e todas as medições?")) deletePeriod.mutate({ id: selectedPeriod.id }); }}>
             <Trash2 className="w-3 h-3" /> Excluir Período
@@ -1812,6 +1834,61 @@ export function BudgetFinanceiro({
           )}
         </div>
       </div>
+
+      {/* ── Dialog: Editar Período (nome, datas e observações; as medições são mantidas) ── */}
+      <Dialog open={showEditPeriodDialog} onOpenChange={setShowEditPeriodDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Período de Medição</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Nome do Período *</Label>
+              <Input
+                value={editPeriodForm.name}
+                onChange={e => setEditPeriodForm(f => ({ ...f, name: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Data Início</Label>
+                <Input type="date" value={editPeriodForm.startDate}
+                  onChange={e => setEditPeriodForm(f => ({ ...f, startDate: e.target.value }))} className="mt-1" />
+              </div>
+              <div>
+                <Label className="text-xs">Data Fim</Label>
+                <Input type="date" value={editPeriodForm.endDate}
+                  onChange={e => setEditPeriodForm(f => ({ ...f, endDate: e.target.value }))} className="mt-1" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Observações</Label>
+              <Input
+                value={editPeriodForm.notes}
+                onChange={e => setEditPeriodForm(f => ({ ...f, notes: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowEditPeriodDialog(false)}>Cancelar</Button>
+            <Button
+              type="button"
+              disabled={!editPeriodForm.name.trim() || updatePeriod.isPending || !selectedPeriod}
+              onClick={() => selectedPeriod && updatePeriod.mutate({
+                id: selectedPeriod.id,
+                name: editPeriodForm.name.trim(),
+                startDate: editPeriodForm.startDate || null,
+                endDate: editPeriodForm.endDate || null,
+                notes: editPeriodForm.notes.trim() || null,
+              })}
+            >
+              {updatePeriod.isPending ? "Salvando..." : "Salvar alterações"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Dialog: Novo Período ── */}
       <Dialog open={showNewPeriodDialog} onOpenChange={setShowNewPeriodDialog}>
