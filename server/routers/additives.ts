@@ -107,6 +107,107 @@ async function recalcAdditiveTotals(additiveId: number) {
   );
 }
 
+// ─── Cópia fiel de item do orçamento original para o aditivo ─────────────────
+
+/** Lê um campo da linha vinda do TiDB (camelCase ou minúsculo). */
+function pickField(row: any, camel: string) {
+  return row[camel] ?? row[camel.toLowerCase()];
+}
+
+/** Material do orçamento entra? (regra: excluir > forçar incluir > toggle geral). */
+async function budgetIncludesMaterialFor(budgetId: number, bi: any): Promise<number> {
+  const bud = await rawQuery(`SELECT includeMaterial FROM budgets WHERE id = ? LIMIT 1`, [budgetId]);
+  const general = Number(bud[0]?.includeMaterial ?? bud[0]?.includematerial ?? 1) !== 0;
+  const exclude = Number(pickField(bi, "excludeMaterialOverride") ?? 0) === 1;
+  const forceInclude = Number(pickField(bi, "includeMaterialOverride") ?? 0) === 1;
+  return exclude ? 0 : (general || forceInclude ? 1 : 0);
+}
+
+/** Etapa raiz do aditivo por nome (cria se não existir). */
+async function findOrCreateAdditiveStage(additiveId: number, name: string, parentStageId: number | null): Promise<number> {
+  const found = parentStageId
+    ? await rawQuery(`SELECT id FROM additive_stages WHERE additiveId = ? AND parentStageId = ? AND name = ? LIMIT 1`, [additiveId, parentStageId, name])
+    : await rawQuery(`SELECT id FROM additive_stages WHERE additiveId = ? AND parentStageId IS NULL AND name = ? LIMIT 1`, [additiveId, name]);
+  if (found.length) return found[0].id;
+  const mo = parentStageId
+    ? await rawQuery(`SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_stages WHERE additiveId = ? AND parentStageId = ?`, [additiveId, parentStageId])
+    : await rawQuery(`SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_stages WHERE additiveId = ? AND parentStageId IS NULL`, [additiveId]);
+  const ins: any = await rawQuery(
+    `INSERT INTO additive_stages (additiveId, parentStageId, name, \`order\`) VALUES (?, ?, ?, ?)`,
+    [additiveId, parentStageId, name, parseInt(mo[0]?.maxOrd || "0") + 1]
+  );
+  return ins.insertId;
+}
+
+/**
+ * Cria no aditivo uma cópia FIEL de um item do orçamento (custos, insumos
+ * customizados, ajustes de material/M.O., encargos sociais, regra de material
+ * e BDI), com a quantidade informada. Não recalcula os totais do aditivo —
+ * quem chama faz isso uma vez no fim.
+ */
+async function copyBudgetItemToAdditive(opts: {
+  additiveId: number;
+  budgetId: number;
+  bi: any;                 // linha de budget_items
+  stageId: number;
+  quantity: number;
+  description?: string;    // se omitido, usa a do item original
+}) {
+  const { bi } = opts;
+  const g = (c: string) => pickField(bi, c);
+
+  let mat = parseFloat(g("materialCost") || "0");
+  let lab = parseFloat(g("laborCost") || "0");
+  let eqp = parseFloat(g("equipmentCost") || "0");
+  const svc = parseFloat(g("serviceCost") || "0");
+  const oth = parseFloat(g("otherCost") || "0");
+  const custom = await rawQuery(
+    `SELECT bii.inputId, bii.coefficient, bii.unitCost, i.type FROM budget_item_inputs bii
+     JOIN inputs i ON i.id = bii.inputId WHERE bii.budgetItemId = ?`,
+    [bi.id]
+  );
+  if (custom.length > 0) {
+    mat = 0; lab = 0; eqp = 0;
+    for (const ci of custom) {
+      const cost = Number(ci.coefficient) * Number(ci.unitCost);
+      const t = (ci.type || "").toLowerCase();
+      if (t === "labor") lab += cost;
+      else if (t === "equipment") eqp += cost;
+      else mat += cost;
+    }
+  }
+  const unitCost = mat + lab + eqp + svc + oth;
+  const includeMaterial = await budgetIncludesMaterialFor(opts.budgetId, bi);
+
+  const mo = await rawQuery(
+    `SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_items WHERE additiveId = ? AND stageId = ?`,
+    [opts.additiveId, opts.stageId]
+  );
+  const result: any = await rawQuery(
+    `INSERT INTO additive_items
+      (additiveId, stageId, type, compositionId, description, unit, quantity,
+       materialCost, laborCost, equipmentCost, serviceCost, otherCost, unitCost, totalCost, \`order\`,
+       aplicarencargossociais, materialadjustment, laboradjustment, includematerial)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      opts.additiveId, opts.stageId, g("type") === "input" || g("type") === "service" ? g("type") : "composition",
+      g("compositionId") ?? null,
+      (opts.description ?? g("description")).slice(0, 2000), g("unit"), opts.quantity,
+      mat, lab, eqp, svc, oth, unitCost, unitCost * opts.quantity, parseInt(mo[0]?.maxOrd || "0") + 1,
+      Number(g("aplicarEncargosSociais") ?? 1), parseFloat(g("materialAdjustment") || "0"), parseFloat(g("laborAdjustment") || "0"),
+      includeMaterial,
+    ]
+  );
+  const newId = result.insertId;
+  for (const ci of custom) {
+    await rawQuery(
+      `INSERT INTO additive_item_inputs (additiveItemId, inputId, coefficient, unitCost) VALUES (?, ?, ?, ?)`,
+      [newId, ci.inputId, ci.coefficient, ci.unitCost]
+    );
+  }
+  return newId as number;
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 export const additivesRouter = router({
@@ -871,95 +972,159 @@ export const additivesRouter = router({
       if (adds[0].frozenAt ?? adds[0].frozenat) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Aditivo congelado — descongele para editar." });
       }
-
       const rows = await rawQuery(`SELECT * FROM budget_items WHERE id = ? AND budgetId = ? LIMIT 1`, [input.budgetItemId, budgetId]);
       if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Item do orçamento não encontrado" });
       const bi: any = rows[0];
-      const g = (camel: string) => bi[camel] ?? bi[camel.toLowerCase()];
-      if (g("type") === "composite" || g("parentItemId")) {
+      if (pickField(bi, "type") === "composite" || pickField(bi, "parentItemId")) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Serviços compostos ainda não são suportados no reequilíbrio." });
       }
-
-      const origQty = parseFloat(g("quantity") || "0");
+      const origQty = parseFloat(pickField(bi, "quantity") || "0");
       const delta = Math.round((input.newQuantity - origQty) * 1000) / 1000;
       if (delta === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "A nova quantidade é igual à orçada — não há diferença a lançar." });
       }
+      const stageId = await findOrCreateAdditiveStage(input.additiveId, "Reequilíbrio de quantitativos", null);
+      const tag = delta < 0 ? "Crédito" : "Acréscimo";
+      const unit = pickField(bi, "unit");
+      const id = await copyBudgetItemToAdditive({
+        additiveId: input.additiveId, budgetId, bi, stageId, quantity: delta,
+        description: `${tag} — ${pickField(bi, "description")} (orçado ${origQty.toLocaleString("pt-BR")} → ${input.newQuantity.toLocaleString("pt-BR")} ${unit})`,
+      });
+      await recalcAdditiveTotals(input.additiveId);
+      return { id, delta, kind: delta < 0 ? "credito" : "acrescimo" };
+    }),
 
-      // Custos unitários: customizações de insumos do item (se houver) senão os gravados no item.
-      let mat = parseFloat(g("materialCost") || "0");
-      let lab = parseFloat(g("laborCost") || "0");
-      let eqp = parseFloat(g("equipmentCost") || "0");
-      const svc = parseFloat(g("serviceCost") || "0");
-      const oth = parseFloat(g("otherCost") || "0");
-      const custom = await rawQuery(
-        `SELECT bii.coefficient, bii.unitCost, i.type FROM budget_item_inputs bii
-         JOIN inputs i ON i.id = bii.inputId WHERE bii.budgetItemId = ?`,
-        [input.budgetItemId]
+  // ── Importar itens do orçamento original (cópia fiel, quantidade informada) ──
+  // Árvore do orçamento original: etapas + itens (inclui serviços compostos; os
+  // filhos aparecem só como contagem — são importados junto com o composto).
+  getBudgetTreeForImport: protectedProcedure
+    .input(z.object({ additiveId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await assertAdditiveOwner(input.additiveId, ctx.user.id);
+      const adds = await rawQuery(`SELECT budgetId FROM budget_additives WHERE id = ? LIMIT 1`, [input.additiveId]);
+      const budgetId = adds[0].budgetId ?? adds[0].budgetid;
+      const stages = await rawQuery(
+        `SELECT id, name, parentStageId FROM budget_stages WHERE budgetId = ? ORDER BY \`order\`, id`,
+        [budgetId]
       );
-      if (custom.length > 0) {
-        mat = 0; lab = 0; eqp = 0;
-        for (const ci of custom) {
-          const cost = Number(ci.coefficient) * Number(ci.unitCost);
-          const t = (ci.type || "").toLowerCase();
-          if (t === "material") mat += cost;
-          else if (t === "labor") lab += cost;
-          else if (t === "equipment") eqp += cost;
+      const byId: Record<number, any> = {};
+      for (const st of stages) byId[st.id] = st;
+      const pathOf = (stageId: number | null) => {
+        const names: string[] = [];
+        let cur = stageId ? byId[stageId] : null;
+        let guard = 0;
+        while (cur && guard++ < 10) { names.unshift(cur.name); cur = cur.parentStageId ? byId[cur.parentStageId] : null; }
+        return names.join(" › ");
+      };
+      const items = await rawQuery(
+        `SELECT id, stageId, type, parentItemId, description, unit, quantity, unitCost
+         FROM budget_items WHERE budgetId = ? ORDER BY stageId, \`order\`, id`,
+        [budgetId]
+      );
+      const childCount: Record<number, number> = {};
+      for (const i of items) {
+        const pid = i.parentItemId ?? i.parentitemid;
+        if (pid) childCount[pid] = (childCount[pid] || 0) + 1;
+      }
+      const roots = items.filter((i: any) => !(i.parentItemId ?? i.parentitemid) && i.stageId && byId[i.stageId]);
+      return {
+        items: roots.map((i: any) => ({
+          id: i.id,
+          stageId: i.stageId,
+          stagePath: pathOf(i.stageId),
+          type: i.type as string,
+          description: i.description as string,
+          unit: i.unit as string,
+          quantity: parseFloat(i.quantity || "0"),
+          unitCost: parseFloat(i.unitCost || "0"),
+          childCount: childCount[i.id] || 0,
+        })),
+      };
+    }),
+
+  // Importa os itens marcados. Serviço composto é "achatado": entram os itens de
+  // dentro dele, com a quantidade ESCALADA pela razão (qtd informada ÷ qtd do
+  // composto no orçamento), cada um com o próprio preço e parâmetros.
+  // targetStageId = etapa do aditivo que recebe os itens; se null, recria a
+  // estrutura Etapa › Sub-etapa do orçamento original dentro do aditivo.
+  importFromBudget: protectedProcedure
+    .input(z.object({
+      additiveId: z.number(),
+      targetStageId: z.number().nullable().optional(),
+      items: z.array(z.object({
+        budgetItemId: z.number(),
+        quantity: z.number().positive(),
+      })).min(1).max(200),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await assertAdditiveOwner(input.additiveId, ctx.user.id);
+      const adds = await rawQuery(`SELECT budgetId, frozenAt FROM budget_additives WHERE id = ? LIMIT 1`, [input.additiveId]);
+      const budgetId = adds[0].budgetId ?? adds[0].budgetid;
+      if (adds[0].frozenAt ?? adds[0].frozenat) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Aditivo congelado — descongele para editar." });
+      }
+      if (input.targetStageId) {
+        const st = await rawQuery(`SELECT id FROM additive_stages WHERE id = ? AND additiveId = ? LIMIT 1`, [input.targetStageId, input.additiveId]);
+        if (!st.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Etapa de destino inválida" });
+      }
+
+      const bStages = await rawQuery(`SELECT id, name, parentStageId FROM budget_stages WHERE budgetId = ?`, [budgetId]);
+      const bById: Record<number, any> = {};
+      for (const st of bStages) bById[st.id] = st;
+      const stageCache = new Map<number, number>(); // budgetStageId -> additiveStageId
+      const ensureStageFor = async (budgetStageId: number): Promise<number> => {
+        if (input.targetStageId) return input.targetStageId;
+        if (stageCache.has(budgetStageId)) return stageCache.get(budgetStageId)!;
+        const chain: any[] = [];
+        let cur = bById[budgetStageId];
+        let guard = 0;
+        while (cur && guard++ < 10) { chain.unshift(cur); cur = cur.parentStageId ? bById[cur.parentStageId] : null; }
+        let parent: number | null = null;
+        for (const st of chain) parent = await findOrCreateAdditiveStage(input.additiveId, st.name, parent);
+        stageCache.set(budgetStageId, parent!);
+        return parent!;
+      };
+
+      // Valida tudo ANTES de gravar qualquer coisa.
+      const plan: { bi: any; qty: number; stageBudgetId: number; description?: string }[] = [];
+      for (const it of input.items) {
+        const rows = await rawQuery(`SELECT * FROM budget_items WHERE id = ? AND budgetId = ? LIMIT 1`, [it.budgetItemId, budgetId]);
+        if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Item do orçamento não encontrado" });
+        const bi: any = rows[0];
+        if (pickField(bi, "parentItemId")) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Selecione o serviço composto, não os itens de dentro dele." });
+        }
+        const stageBudgetId = pickField(bi, "stageId");
+        if (!stageBudgetId || !bById[stageBudgetId]) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Item sem etapa válida no orçamento" });
+        }
+        if (pickField(bi, "type") === "composite") {
+          const origQty = parseFloat(pickField(bi, "quantity") || "0");
+          const ratio = origQty > 0 ? it.quantity / origQty : it.quantity;
+          const kids = await rawQuery(`SELECT * FROM budget_items WHERE parentItemId = ? ORDER BY \`order\`, id`, [bi.id]);
+          if (!kids.length) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: `O serviço composto "${pickField(bi, "description")}" não tem itens dentro.` });
+          }
+          for (const kid of kids) {
+            const kidQty = Math.round(parseFloat(pickField(kid, "quantity") || "0") * ratio * 1000) / 1000;
+            if (kidQty <= 0) continue;
+            plan.push({ bi: kid, qty: kidQty, stageBudgetId, description: `${pickField(bi, "description")} › ${pickField(kid, "description")}` });
+          }
+        } else {
+          plan.push({ bi, qty: it.quantity, stageBudgetId });
         }
       }
-      const unitCost = mat + lab + eqp + svc + oth;
 
-      // Material entra? (regra do orçamento: exclude > include override > toggle geral)
-      const bud = await rawQuery(`SELECT includeMaterial FROM budgets WHERE id = ? LIMIT 1`, [budgetId]);
-      const budgetIncludesMaterial = Number(bud[0]?.includeMaterial ?? bud[0]?.includematerial ?? 1) !== 0;
-      const exclude = Number(g("excludeMaterialOverride") ?? 0) === 1;
-      const forceInclude = Number(g("includeMaterialOverride") ?? 0) === 1;
-      const includeMaterial = exclude ? 0 : (budgetIncludesMaterial || forceInclude ? 1 : 0);
-
-      // Etapa fixa do aditivo para as linhas de reequilíbrio (cria se não existir).
-      const REB_STAGE = "Reequilíbrio de quantitativos";
-      let stageRows = await rawQuery(
-        `SELECT id FROM additive_stages WHERE additiveId = ? AND parentStageId IS NULL AND name = ? LIMIT 1`,
-        [input.additiveId, REB_STAGE]
-      );
-      let stageId: number;
-      if (stageRows.length) {
-        stageId = stageRows[0].id;
-      } else {
-        const mo = await rawQuery(
-          `SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_stages WHERE additiveId = ? AND parentStageId IS NULL`,
-          [input.additiveId]
-        );
-        const ins: any = await rawQuery(
-          `INSERT INTO additive_stages (additiveId, parentStageId, name, \`order\`) VALUES (?, NULL, ?, ?)`,
-          [input.additiveId, REB_STAGE, parseInt(mo[0]?.maxOrd || "0") + 1]
-        );
-        stageId = ins.insertId;
+      let created = 0;
+      for (const p of plan) {
+        const stageId = await ensureStageFor(p.stageBudgetId);
+        await copyBudgetItemToAdditive({
+          additiveId: input.additiveId, budgetId, bi: p.bi, stageId, quantity: p.qty, description: p.description,
+        });
+        created++;
       }
-
-      const mo2 = await rawQuery(
-        `SELECT COALESCE(MAX(\`order\`), 0) as maxOrd FROM additive_items WHERE additiveId = ? AND stageId = ?`,
-        [input.additiveId, stageId]
-      );
-      const tag = delta < 0 ? "Crédito" : "Acréscimo";
-      const description = `${tag} — ${g("description")} (orçado ${origQty.toLocaleString("pt-BR")} → ${input.newQuantity.toLocaleString("pt-BR")} ${g("unit")})`;
-
-      const result: any = await rawQuery(
-        `INSERT INTO additive_items
-          (additiveId, stageId, type, compositionId, description, unit, quantity,
-           materialCost, laborCost, equipmentCost, serviceCost, otherCost, unitCost, totalCost, \`order\`,
-           aplicarencargossociais, materialadjustment, laboradjustment, includematerial)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          input.additiveId, stageId, g("type") || "composition", g("compositionId") ?? null,
-          description.slice(0, 2000), g("unit"), delta,
-          mat, lab, eqp, svc, oth, unitCost, unitCost * delta, parseInt(mo2[0]?.maxOrd || "0") + 1,
-          Number(g("aplicarEncargosSociais") ?? 1), parseFloat(g("materialAdjustment") || "0"), parseFloat(g("laborAdjustment") || "0"),
-          includeMaterial,
-        ]
-      );
       await recalcAdditiveTotals(input.additiveId);
-      return { id: result.insertId, delta, kind: delta < 0 ? "credito" : "acrescimo" };
+      return { created };
     }),
 
   // ── Sincronizar item do aditivo com valores do orçamento principal ────────────

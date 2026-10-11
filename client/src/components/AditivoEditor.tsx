@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Plus, ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle2, XCircle,
-  Settings, Layers, Search, X, SlidersHorizontal, List, Save, RotateCcw, RefreshCw
+  Settings, Layers, Search, X, SlidersHorizontal, List, Save, RotateCcw, RefreshCw, Download
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Scale } from "lucide-react";
@@ -131,6 +131,26 @@ export function AditivoEditor({
     otherCost: 0,
     unitCost: 0,
     compositionId: null as number | null,
+  });
+
+  // Importar itens do orçamento original (cópia fiel, quantidade informada)
+  const [importDialog, setImportDialog] = useState<{ open: boolean; stageId: number | null }>({ open: false, stageId: null });
+  const [importSearch, setImportSearch] = useState("");
+  const [importSel, setImportSel] = useState<Record<number, string>>({}); // budgetItemId -> quantidade digitada
+  const { data: importTree } = trpc.additives.getBudgetTreeForImport.useQuery(
+    { additiveId },
+    { enabled: importDialog.open }
+  );
+  const importFromBudget = trpc.additives.importFromBudget.useMutation({
+    onSuccess: (r) => {
+      utils.additives.getStages.invalidate({ additiveId });
+      utils.additives.list.invalidate();
+      toast.success(`${r.created} ${r.created === 1 ? "item importado" : "itens importados"} do orçamento original.`);
+      setImportDialog({ open: false, stageId: null });
+      setImportSel({});
+      setImportSearch("");
+    },
+    onError: (e) => toast.error("Erro: " + e.message),
   });
 
   // Assistente de reequilíbrio de quantitativos (crédito/acréscimo)
@@ -799,6 +819,12 @@ export function AditivoEditor({
                     >
                       <Settings className="h-3.5 w-3.5 text-orange-500" /> Serviço por preço
                     </button>
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 rounded flex items-center gap-2 border-t mt-1 pt-2"
+                      onClick={() => { setImportDialog({ open: true, stageId: stage.id }); }}
+                    >
+                      <Download className="h-3.5 w-3.5 text-teal-600" /> Importar do orçamento
+                    </button>
                   </div>
                 </PopoverContent>
               </Popover>
@@ -908,6 +934,13 @@ export function AditivoEditor({
           </Button>
           <div className="flex gap-2">
             <Button
+              size="sm" variant="outline" className="h-7 text-xs gap-1 text-teal-700 border-teal-300 hover:bg-teal-50"
+              onClick={() => setImportDialog({ open: true, stageId: null })}
+              title="Traz itens do orçamento original com todos os parâmetros, informando só a quantidade"
+            >
+              <Download className="h-3.5 w-3.5" /> Importar do orçamento
+            </Button>
+            <Button
               size="sm" variant="outline" className="h-7 text-xs gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
               onClick={() => setRebalanceOpen(true)}
               title="Lança a diferença entre a quantidade orçada e a nova quantidade (crédito ou acréscimo)"
@@ -936,6 +969,119 @@ export function AditivoEditor({
           {stages.map((stage: any, idx: number) => renderStage(stage, idx))}
         </div>
       )}
+
+      {/* Dialog: Importar do orçamento original */}
+      <Dialog open={importDialog.open} onOpenChange={(open) => { if (!open) { setImportDialog({ open: false, stageId: null }); setImportSel({}); setImportSearch(""); } }}>
+        <DialogContent className="max-w-2xl w-[95vw] max-h-[90vh] overflow-y-auto overflow-x-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Importar do orçamento original</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const all: any[] = importTree?.items ?? [];
+            const q = importSearch.trim().toLowerCase();
+            const visible = all.filter((i: any) => !q || i.description.toLowerCase().includes(q) || (i.stagePath || "").toLowerCase().includes(q));
+            const groups = new Map<string, any[]>();
+            for (const i of visible) {
+              const k = i.stagePath || "Sem etapa";
+              groups.set(k, [...(groups.get(k) || []), i]);
+            }
+            const selectedIds = Object.keys(importSel).map(Number);
+            const parseQty = (v: string) => parseFloat((v || "").replace(",", "."));
+            const allFilled = selectedIds.length > 0 && selectedIds.every(id => parseQty(importSel[id]) > 0);
+            const toggle = (i: any, on: boolean) => setImportSel(prev => {
+              const next = { ...prev };
+              if (on) next[i.id] = next[i.id] ?? ""; else delete next[i.id];
+              return next;
+            });
+            return (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">
+                  Marque os itens e informe só a <b>quantidade</b>. Custos, insumos, ajustes e regras de BDI vêm idênticos ao orçamento.
+                  Serviço composto entra separado em seus itens (cada um com seu preço).
+                  {importDialog.stageId ? " Os itens entram na etapa em que você clicou." : " A estrutura Etapa › Sub-etapa do orçamento é recriada no aditivo."}
+                </p>
+                <Input placeholder="Buscar item ou etapa..." value={importSearch} onChange={e => setImportSearch(e.target.value)} className="h-8 text-xs" />
+                <div className="max-h-[46vh] overflow-y-auto border rounded-md">
+                  {!importTree && <div className="p-4 text-center text-xs text-gray-400">Carregando orçamento...</div>}
+                  {importTree && !visible.length && <div className="p-4 text-center text-xs text-gray-400">Nenhum item encontrado.</div>}
+                  {Array.from(groups.entries()).map(([path, items]) => {
+                    const allChecked = items.every((i: any) => i.id in importSel);
+                    return (
+                      <div key={path}>
+                        <label className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border-y text-[11px] font-semibold text-slate-600 cursor-pointer sticky top-0">
+                          <input type="checkbox" checked={allChecked} onChange={e => items.forEach((i: any) => toggle(i, e.target.checked))} />
+                          {path}
+                        </label>
+                        {items.map((i: any) => {
+                          const checked = i.id in importSel;
+                          return (
+                            <div key={i.id} className={cn("flex items-center gap-2 px-3 py-1.5 border-b text-xs", checked && "bg-teal-50/60")}>
+                              <input type="checkbox" checked={checked} onChange={e => toggle(i, e.target.checked)} />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-gray-800 break-words">{i.description}</div>
+                                <div className="text-[10px] text-gray-400">
+                                  Orçado: {i.quantity.toLocaleString("pt-BR")} {i.unit}
+                                  {i.type === "composite" && <span className="ml-1 rounded bg-purple-100 text-purple-700 px-1">Composto · {i.childCount} {i.childCount === 1 ? "item" : "itens"}</span>}
+                                </div>
+                              </div>
+                              {checked && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <Input
+                                    type="number" step="0.01" min={0} placeholder="Qtd"
+                                    value={importSel[i.id]}
+                                    onChange={e => setImportSel(prev => ({ ...prev, [i.id]: e.target.value }))}
+                                    className="h-7 w-24 text-xs"
+                                  />
+                                  <span className="text-[10px] text-gray-500 w-8">{i.unit}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>{selectedIds.length} {selectedIds.length === 1 ? "item selecionado" : "itens selecionados"}</span>
+                  {selectedIds.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-teal-700 hover:underline"
+                      onClick={() => setImportSel(prev => {
+                        const next: Record<number, string> = {};
+                        for (const id of Object.keys(prev).map(Number)) {
+                          const it = all.find((x: any) => x.id === id);
+                          next[id] = it ? String(it.quantity) : prev[id];
+                        }
+                        return next;
+                      })}
+                    >
+                      Preencher com a quantidade orçada
+                    </button>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => { setImportDialog({ open: false, stageId: null }); setImportSel({}); setImportSearch(""); }}>Cancelar</Button>
+                  <Button
+                    disabled={!allFilled || importFromBudget.isPending}
+                    onClick={() => importFromBudget.mutate({
+                      additiveId,
+                      targetStageId: importDialog.stageId,
+                      items: selectedIds.map(id => ({ budgetItemId: id, quantity: parseQty(importSel[id]) })),
+                    })}
+                  >
+                    {importFromBudget.isPending ? "Importando..." : `Importar ${selectedIds.length || ""} ${selectedIds.length === 1 ? "item" : "itens"}`}
+                  </Button>
+                </DialogFooter>
+                {selectedIds.length > 0 && !allFilled && (
+                  <p className="text-[11px] text-amber-600 text-right">Informe a quantidade de todos os itens marcados.</p>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog: Reequilíbrio de quantitativos */}
       <Dialog open={rebalanceOpen} onOpenChange={(open) => { if (!open) { setRebalanceOpen(false); setRebalanceItem(null); setRebalanceSearch(""); setRebalanceNewQty(""); } }}>
