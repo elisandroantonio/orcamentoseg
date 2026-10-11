@@ -437,7 +437,33 @@ export const additivesRouter = router({
         [input.id, ctx.user.id]
       );
       if (!rows.length) throw new TRPCError({ code: "NOT_FOUND" });
-      await rawQuery(`DELETE FROM additive_stages WHERE id = ?`, [input.id]);
+      const additiveId = rows[0].additiveId ?? rows[0].additiveid;
+      // Coleta a etapa + todas as sub-etapas e apaga tudo na mão (não depender dos FKs do banco).
+      const all = await rawQuery(`SELECT id, parentStageId FROM additive_stages WHERE additiveId = ?`, [additiveId]);
+      const ids = new Set<number>([input.id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const r of all) {
+          const pid = r.parentStageId ?? r.parentstageid;
+          if (pid && ids.has(Number(pid)) && !ids.has(Number(r.id))) { ids.add(Number(r.id)); changed = true; }
+        }
+      }
+      const list = Array.from(ids);
+      const ph = list.map(() => "?").join(",");
+      const items = await rawQuery(`SELECT id FROM additive_items WHERE stageId IN (${ph})`, list);
+      const itemIds = items.map((i: any) => Number(i.id));
+      if (itemIds.length) {
+        const iph = itemIds.map(() => "?").join(",");
+        await rawQuery(`DELETE FROM additive_measurements WHERE additiveItemId IN (${iph})`, itemIds);
+        await rawQuery(`DELETE FROM additive_item_inputs WHERE additiveItemId IN (${iph})`, itemIds);
+        await rawQuery(`DELETE FROM additive_items WHERE id IN (${iph})`, itemIds);
+      }
+      // Sub-etapas primeiro (filhas antes das mães)
+      for (const id of list.reverse()) {
+        await rawQuery(`DELETE FROM additive_stages WHERE id = ?`, [id]);
+      }
+      await recalcAdditiveTotals(additiveId);
       return { success: true };
     }),
 
@@ -607,6 +633,8 @@ export const additivesRouter = router({
       );
       if (!rows.length) throw new TRPCError({ code: "NOT_FOUND" });
       const additiveId = rows[0].additiveId;
+      await rawQuery(`DELETE FROM additive_measurements WHERE additiveItemId = ?`, [input.id]);
+      await rawQuery(`DELETE FROM additive_item_inputs WHERE additiveItemId = ?`, [input.id]);
       await rawQuery(`DELETE FROM additive_items WHERE id = ?`, [input.id]);
       await recalcAdditiveTotals(additiveId);
       return { success: true };
