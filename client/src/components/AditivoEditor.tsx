@@ -184,9 +184,31 @@ export function AditivoEditor({
     onSuccess: () => { utils.additives.getStages.invalidate({ additiveId }); setEditingStageId(null); },
     onError: (e) => toast.error("Erro: " + e.message),
   });
+  // Remove da tela NA HORA (otimista) e confirma/volta atrás quando o servidor responder.
+  const pruneTree = (nodes: any[], kind: "stage" | "item", id: number): any[] =>
+    nodes
+      .filter((n: any) => !(kind === "stage" && n.id === id))
+      .map((n: any) => ({
+        ...n,
+        items: kind === "item" ? (n.items || []).filter((i: any) => i.id !== id) : n.items,
+        children: pruneTree(n.children || [], kind, id),
+      }));
   const deleteStage = trpc.additives.deleteStage.useMutation({
-    onSuccess: () => { utils.additives.getStages.invalidate({ additiveId }); toast.success("Etapa removida."); },
-    onError: (e) => toast.error("Erro: " + e.message),
+    onMutate: async ({ id }) => {
+      await utils.additives.getStages.cancel({ additiveId });
+      const prev = utils.additives.getStages.getData({ additiveId });
+      utils.additives.getStages.setData({ additiveId }, (old: any) => old ? pruneTree(old, "stage", id) : old);
+      return { prev };
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.prev) utils.additives.getStages.setData({ additiveId }, ctx.prev);
+      toast.error("Erro: " + e.message);
+    },
+    onSuccess: () => { toast.success("Etapa removida."); },
+    onSettled: () => {
+      utils.additives.getStages.invalidate({ additiveId });
+      utils.additives.list.invalidate();
+    },
   });
   const createItem = trpc.additives.createItem.useMutation({
     onSuccess: () => {
@@ -207,12 +229,21 @@ export function AditivoEditor({
     onError: (e) => toast.error("Erro: " + e.message),
   });
   const deleteItem = trpc.additives.deleteItem.useMutation({
-    onSuccess: () => {
-      utils.additives.getStages.invalidate({ additiveId });
-      utils.additives.list.invalidate({ budgetId });
-      toast.success("Item removido.");
+    onMutate: async ({ id }) => {
+      await utils.additives.getStages.cancel({ additiveId });
+      const prev = utils.additives.getStages.getData({ additiveId });
+      utils.additives.getStages.setData({ additiveId }, (old: any) => old ? pruneTree(old, "item", id) : old);
+      return { prev };
     },
-    onError: (e) => toast.error("Erro: " + e.message),
+    onError: (e, _v, ctx) => {
+      if (ctx?.prev) utils.additives.getStages.setData({ additiveId }, ctx.prev);
+      toast.error("Erro: " + e.message);
+    },
+    onSuccess: () => { toast.success("Item removido."); },
+    onSettled: () => {
+      utils.additives.getStages.invalidate({ additiveId });
+      utils.additives.list.invalidate();
+    },
   });
 
   // Mutations de sincronização com o orçamento principal
