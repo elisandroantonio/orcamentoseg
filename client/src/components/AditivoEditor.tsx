@@ -180,9 +180,28 @@ export function AditivoEditor({
     onSuccess: () => { utils.additives.getStages.invalidate({ additiveId }); toast.success("Etapa criada!"); setAddStageDialog({ open: false, parentId: null }); setNewStageName(""); },
     onError: (e) => toast.error("Erro: " + e.message),
   });
+  const renameTree = (nodes: any[], id: number, name: string): any[] =>
+    nodes.map((n: any) => ({
+      ...n,
+      name: n.id === id ? name : n.name,
+      children: renameTree(n.children || [], id, name),
+    }));
   const updateStage = trpc.additives.updateStage.useMutation({
-    onSuccess: () => { utils.additives.getStages.invalidate({ additiveId }); setEditingStageId(null); },
-    onError: (e) => toast.error("Erro: " + e.message),
+    // Fecha a edição e mostra o novo nome na hora; o servidor confirma em seguida.
+    onMutate: async (vars: any) => {
+      await utils.additives.getStages.cancel({ additiveId });
+      const prev = utils.additives.getStages.getData({ additiveId });
+      if (typeof vars.name === "string") {
+        utils.additives.getStages.setData({ additiveId }, (old: any) => old ? renameTree(old, vars.id, vars.name) : old);
+      }
+      setEditingStageId(null);
+      return { prev };
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.prev) utils.additives.getStages.setData({ additiveId }, ctx.prev);
+      toast.error("Erro ao salvar: " + e.message);
+    },
+    onSettled: () => { utils.additives.getStages.invalidate({ additiveId }); },
   });
   // Remove da tela NA HORA (otimista) e confirma/volta atrás quando o servidor responder.
   const pruneTree = (nodes: any[], kind: "stage" | "item", id: number): any[] =>
