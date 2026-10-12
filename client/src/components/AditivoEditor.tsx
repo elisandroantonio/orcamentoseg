@@ -136,7 +136,8 @@ export function AditivoEditor({
   // Importar itens do orçamento original (cópia fiel, quantidade informada)
   const [importDialog, setImportDialog] = useState<{ open: boolean; stageId: number | null }>({ open: false, stageId: null });
   const [importSearch, setImportSearch] = useState("");
-  const [importSel, setImportSel] = useState<Record<number, string>>({}); // budgetItemId -> quantidade digitada
+  const [importSel, setImportSel] = useState<Record<number, string>>({});
+  const [importCredit, setImportCredit] = useState<Record<number, boolean>>({}); // budgetItemId -> quantidade digitada
   const { data: importTree } = trpc.additives.getBudgetTreeForImport.useQuery(
     { additiveId },
     { enabled: importDialog.open }
@@ -148,6 +149,7 @@ export function AditivoEditor({
       toast.success(`${r.created} ${r.created === 1 ? "item importado" : "itens importados"} do orçamento original.`);
       setImportDialog({ open: false, stageId: null });
       setImportSel({});
+      setImportCredit({});
       setImportSearch("");
     },
     onError: (e) => toast.error("Erro: " + e.message),
@@ -996,7 +998,7 @@ export function AditivoEditor({
             return (
               <div className="space-y-2">
                 <p className="text-xs text-gray-500">
-                  Marque os itens e informe só a <b>quantidade</b>. Custos, insumos, ajustes e regras de BDI vêm idênticos ao orçamento.
+                  Marque os itens e informe só a <b>quantidade</b>. Marcando <b>Gerar crédito</b>, a quantidade é a <b>não executada</b> e entra como desconto no total do aditivo. Custos, insumos, ajustes e regras de BDI vêm idênticos ao orçamento.
                   Serviço composto entra separado em seus itens (cada um com seu preço).
                   {importDialog.stageId ? " Os itens entram na etapa em que você clicou." : " A estrutura Etapa › Sub-etapa do orçamento é recriada no aditivo."}
                 </p>
@@ -1026,6 +1028,10 @@ export function AditivoEditor({
                               </div>
                               {checked && (
                                 <div className="flex items-center gap-1 shrink-0">
+                                  <label className={cn("flex items-center gap-1 text-[10px] cursor-pointer rounded px-1.5 py-1 border", importCredit[i.id] ? "bg-red-50 border-red-300 text-red-700 font-semibold" : "text-gray-500")}>
+                                    <input type="checkbox" checked={!!importCredit[i.id]} onChange={e => setImportCredit(prev => ({ ...prev, [i.id]: e.target.checked }))} />
+                                    Gerar crédito
+                                  </label>
                                   <Input
                                     type="number" step="0.01" min={0} placeholder="Qtd"
                                     value={importSel[i.id]}
@@ -1068,7 +1074,7 @@ export function AditivoEditor({
                     onClick={() => importFromBudget.mutate({
                       additiveId,
                       targetStageId: importDialog.stageId,
-                      items: selectedIds.map(id => ({ budgetItemId: id, quantity: parseQty(importSel[id]) })),
+                      items: selectedIds.map(id => ({ budgetItemId: id, quantity: parseQty(importSel[id]), credit: !!importCredit[id] })),
                     })}
                   >
                     {importFromBudget.isPending ? "Importando..." : `Importar ${selectedIds.length || ""} ${selectedIds.length === 1 ? "item" : "itens"}`}

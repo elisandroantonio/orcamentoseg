@@ -1082,6 +1082,7 @@ export const additivesRouter = router({
       items: z.array(z.object({
         budgetItemId: z.number(),
         quantity: z.number().positive(),
+        credit: z.boolean().optional(), // true = quantidade NÃO executada → entra como crédito (negativo)
       })).min(1).max(200),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -1115,6 +1116,7 @@ export const additivesRouter = router({
 
       // Valida tudo ANTES de gravar qualquer coisa.
       const plan: { bi: any; qty: number; stageBudgetId: number; description?: string }[] = [];
+      const CR = "(CRÉDITO) ";
       for (const it of input.items) {
         const rows = await rawQuery(`SELECT * FROM budget_items WHERE id = ? AND budgetId = ? LIMIT 1`, [it.budgetItemId, budgetId]);
         if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Item do orçamento não encontrado" });
@@ -1136,10 +1138,14 @@ export const additivesRouter = router({
           for (const kid of kids) {
             const kidQty = Math.round(parseFloat(pickField(kid, "quantity") || "0") * ratio * 1000) / 1000;
             if (kidQty <= 0) continue;
-            plan.push({ bi: kid, qty: kidQty, stageBudgetId, description: `${pickField(bi, "description")} › ${pickField(kid, "description")}` });
+            const d = `${pickField(bi, "description")} › ${pickField(kid, "description")}`;
+            plan.push({ bi: kid, qty: it.credit ? -kidQty : kidQty, stageBudgetId, description: it.credit ? CR + d : d });
           }
         } else {
-          plan.push({ bi, qty: it.quantity, stageBudgetId });
+          plan.push({
+            bi, qty: it.credit ? -it.quantity : it.quantity, stageBudgetId,
+            description: it.credit ? CR + pickField(bi, "description") : undefined,
+          });
         }
       }
 
