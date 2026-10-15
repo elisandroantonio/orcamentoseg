@@ -4084,13 +4084,21 @@ export default function BudgetForm() {
                         ? (item.composition?.unit || item.unit || "")
                         : (item.unit || ""),
                       quantity: String(item.quantity || "1"),
+                      // Composição: valores do próprio item (customizações salvas) têm prioridade;
+                      // só cai pra composição-base se o item não tiver valores — mesma regra do
+                      // card "Valor do Contrato" (allItems) e do servidor.
                       materialCost: item.type === 'composition'
-                        ? (item.composition?.materialCost || "0")
+                        ? ((Number(item.materialCost || 0) > 0 || Number(item.laborCost || 0) > 0 || Number(item.equipmentCost || 0) > 0)
+                            ? (item.materialCost || "0") : (item.composition?.materialCost || "0"))
                         : (item.materialCost || "0"),
                       laborCost: item.type === 'composition'
-                        ? (item.composition?.laborCost || "0")
+                        ? ((Number(item.materialCost || 0) > 0 || Number(item.laborCost || 0) > 0 || Number(item.equipmentCost || 0) > 0)
+                            ? (item.laborCost || "0") : (item.composition?.laborCost || "0"))
                         : (item.laborCost || "0"),
-                      equipmentCost: item.equipmentCost || "0",
+                      equipmentCost: item.type === 'composition'
+                        ? ((Number(item.materialCost || 0) > 0 || Number(item.laborCost || 0) > 0 || Number(item.equipmentCost || 0) > 0)
+                            ? (item.equipmentCost || "0") : (item.composition?.equipmentCost || "0"))
+                        : (item.equipmentCost || "0"),
                       serviceCost: item.serviceCost || "0",
                       otherCost: item.otherCost || "0",
                       unitCost: item.unitCost || "0",
