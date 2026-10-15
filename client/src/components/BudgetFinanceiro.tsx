@@ -1271,7 +1271,7 @@ export function BudgetFinanceiro({
                   const t = calcItemTotal(child);
                   total += t;
                   const mi = periodMeasMap[Number(child.id)];
-                  medPeriodo += mi ? Number(mi.valueMeasured) : 0;
+                  medPeriodo += t * (mi ? Number(mi.percentMeasured) : 0) / 100;
                   const prevPct = accumMap[Number(child.id)] || 0;
                   const miPct = mi ? Number(mi.percentMeasured) : 0;
                   acumulado += t * Math.min(100, prevPct + miPct) / 100;
@@ -1280,7 +1280,7 @@ export function BudgetFinanceiro({
                 const t = calcItemTotal(item);
                 total += t;
                 const mi = periodMeasMap[Number(item.id)];
-                medPeriodo += mi ? Number(mi.valueMeasured) : 0;
+                medPeriodo += t * (mi ? Number(mi.percentMeasured) : 0) / 100;
                 const prevPct = accumMap[Number(item.id)] || 0;
                 const miPct = mi ? Number(mi.percentMeasured) : 0;
                 acumulado += t * Math.min(100, prevPct + miPct) / 100;
@@ -1334,7 +1334,7 @@ export function BudgetFinanceiro({
                     unitCostWithBdi: Number(child.quantity) > 0 ? t / Number(child.quantity) : 0,
                     totalWithBdi: t,
                     percentMedidoPeriodo: miPct,
-                    valueMedidoPeriodo: mi ? Number(mi.valueMeasured) : 0,
+                    valueMedidoPeriodo: t * miPct / 100,
                     percentAcumulado: accumPct,
                     valueAcumulado: t * accumPct / 100,
                     saldo: t - t * accumPct / 100,
@@ -1356,7 +1356,7 @@ export function BudgetFinanceiro({
                   unitCostWithBdi: Number(item.quantity) > 0 ? t / Number(item.quantity) : 0,
                   totalWithBdi: t,
                   percentMedidoPeriodo: miPct,
-                  valueMedidoPeriodo: mi ? Number(mi.valueMeasured) : 0,
+                  valueMedidoPeriodo: t * miPct / 100,
                   percentAcumulado: accumPct,
                   valueAcumulado: t * accumPct / 100,
                   saldo: t - t * accumPct / 100,
@@ -1391,13 +1391,22 @@ export function BudgetFinanceiro({
       // ── Histórico de períodos com totais ──────────────────────────────────
       const approvedAdditivesTotal = serverData.approvedAdditives.reduce((s: number, a: any) => s + (a.totalCostWithBdi || 0), 0);
       const totalContratoComAditivos = totalContrato + approvedAdditivesTotal;
+      const itemTotalById: Record<number, number> = {};
+      stages.forEach(st => st.items.forEach(it => {
+        if (it.type === 'composite') (it.children || []).forEach(c => { itemTotalById[Number(c.id)] = calcItemTotal(c); });
+        else itemTotalById[Number(it.id)] = calcItemTotal(it);
+      }));
       let runningAccum = 0;
       const allPeriodsFormatted = serverData.allPeriods
         .sort((a, b) => a.periodNumber - b.periodNumber)
         .map(p => {
+          // Valor = % medido × total ATUAL do item (igual à planilha), não o valor
+          // gravado na época (que fica defasado se o BDI/composição mudou depois).
           let periodTotal = 0;
           serverData.allMeasurementItems.forEach((mi: any) => {
-            if (Number(mi.periodId) === Number(p.id)) periodTotal += Number(mi.valueMeasured);
+            if (Number(mi.periodId) === Number(p.id)) {
+              periodTotal += (itemTotalById[Number(mi.budgetItemId)] || 0) * Number(mi.percentMeasured) / 100;
+            }
           });
           runningAccum += periodTotal;
           return {
