@@ -1397,7 +1397,9 @@ export function BudgetFinanceiro({
         else itemTotalById[Number(it.id)] = calcItemTotal(it);
       }));
       let runningAccum = 0;
+      // Histórico do boletim: só medições FECHADAS (abertas ainda não valem).
       const allPeriodsFormatted = serverData.allPeriods
+        .filter(p => p.status === "closed")
         .sort((a, b) => a.periodNumber - b.periodNumber)
         .map(p => {
           // Valor = % medido × total ATUAL do item (igual à planilha), não o valor
