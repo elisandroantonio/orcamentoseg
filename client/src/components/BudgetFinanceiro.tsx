@@ -1255,9 +1255,9 @@ export function BudgetFinanceiro({
 
       // ── Construir linhas hierárquicas do orçamento original ───────────────
       // Função recursiva que processa etapas e seus filhos
-      const buildRows = (stageList: BudgetStage[], depth: number, counterPrefix: string): BoletimItemRow[] => {
+      const buildRows = (stageList: BudgetStage[], depth: number, counterPrefix: string, startCounter = 0): BoletimItemRow[] => {
         const rows: BoletimItemRow[] = [];
-        let stageCounter = 1;
+        let stageCounter = startCounter + 1;
         stageList.forEach(stage => {
           const stageNum = counterPrefix ? `${counterPrefix}.${stageCounter}` : String(stageCounter);
           stageCounter++;
@@ -1313,12 +1313,10 @@ export function BudgetFinanceiro({
             depth,
           });
 
-          // Sub-etapas (recursão)
+          // Itens da etapa — SEMPRE listados, inclusive quando a etapa também tem
+          // sub-etapas (antes eram omitidos e sumiam do PDF/total).
           const subStages = stages.filter(s2 => s2.parentStageId === stage.id);
-          if (subStages.length > 0) {
-            rows.push(...buildRows(subStages, depth + 1, stageNum));
-          } else {
-            // Itens da etapa
+          {
             let itemCounter = 1;
             stage.items.forEach(item => {
               if (item.type === 'composite') {
@@ -1367,6 +1365,10 @@ export function BudgetFinanceiro({
                 });
               }
             });
+            // Sub-etapas numeradas depois dos itens (evita número repetido)
+            if (subStages.length > 0) {
+              rows.push(...buildRows(subStages, depth + 1, stageNum, itemCounter - 1));
+            }
           }
         });
         return rows;
@@ -1379,7 +1381,8 @@ export function BudgetFinanceiro({
       let totalContrato = 0;
       let totalMedidoPeriodo = 0;
       let totalMedidoAcumulado = 0;
-      itemRows.filter(r => !r.isStage).forEach(r => {
+      // Soma as etapas RAIZ (já incluem sub-etapas e itens de qualquer nível).
+      itemRows.filter(r => r.isStage && r.depth === 0).forEach(r => {
         totalContrato += r.totalWithBdi;
         totalMedidoPeriodo += r.valueMedidoPeriodo;
         totalMedidoAcumulado += r.valueAcumulado;
