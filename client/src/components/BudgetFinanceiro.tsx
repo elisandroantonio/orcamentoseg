@@ -401,44 +401,35 @@ function OriginalBudgetTab({
     const isExpanded = expandedStages.has(stage.id);
     const subStages = stages.filter(s => s.parentStageId === stage.id);
     const prefix = `${stageIndex + 1}`;
-    const stageTotalWithBdi = stage.items.reduce((acc, item) => {
-      if (item.type !== 'composite') return acc + calcItemTotalWithBdi(item);
-      return acc + (item.children || []).reduce((a, c) => a + calcItemTotalWithBdi(c), 0);
-    }, 0) + stages.filter(s => s.parentStageId === stage.id).reduce((acc, sub) => {
-      return acc + sub.items.reduce((a2, item) => {
-        if (item.type !== 'composite') return a2 + calcItemTotalWithBdi(item);
-        return a2 + (item.children || []).reduce((a3, c) => a3 + calcItemTotalWithBdi(c), 0);
-      }, 0);
-    }, 0);
-
-    let stageMedidoPeriodo = 0;
-    // Acumulado da etapa: calculado a partir dos % acumulados de cada item
-    let stageValueAcum = 0;
-    stage.items.forEach(item => {
-      if (item.type !== 'composite') {
-        const mi = measurementMap[item.id];
-        // Usa valor editado em tempo real se disponível, senão usa o salvo
-        const pctStr = editingValues[item.id] ?? (mi ? String(mi.percentMeasured) : "0");
-        const pctNum = Math.min(100, Math.max(0, Number(pctStr.replace(",", ".")) || 0));
-        const itemTotal = calcItemTotalWithBdi(item);
-        stageMedidoPeriodo += itemTotal * pctNum / 100;
-        const prevPct = historicalAccumMap[item.id] || 0;
-        const itemPctAcum = Math.min(100, prevPct + pctNum);
-        stageValueAcum += itemTotal * itemPctAcum / 100;
-      }
-      if (item.children) {
-        item.children.forEach(child => {
-          const mi = measurementMap[child.id];
-          const pctStr = editingValues[child.id] ?? (mi ? String(mi.percentMeasured) : "0");
-          const pctNum = Math.min(100, Math.max(0, Number(pctStr.replace(",", ".")) || 0));
-          const childTotal = calcItemTotalWithBdi(child);
-          stageMedidoPeriodo += childTotal * pctNum / 100;
-          const prevPct = historicalAccumMap[child.id] || 0;
-          const childPctAcum = Math.min(100, prevPct + pctNum);
-          stageValueAcum += childTotal * childPctAcum / 100;
-        });
-      }
-    });
+    // Totais da etapa: ela própria + TODAS as sub-etapas (qualquer nível)
+    const pctOf = (id: number) => {
+      const mi = measurementMap[id];
+      const pctStr = editingValues[id] ?? (mi ? String(mi.percentMeasured) : "0");
+      return Math.min(100, Math.max(0, Number(pctStr.replace(",", ".")) || 0));
+    };
+    const sumStage = (st: BudgetStage): { total: number; med: number; acum: number } => {
+      let total = 0, med = 0, acum = 0;
+      const addLeaf = (it: BudgetItem) => {
+        const t = calcItemTotalWithBdi(it);
+        const pct = pctOf(it.id);
+        total += t;
+        med += t * pct / 100;
+        acum += t * Math.min(100, (historicalAccumMap[it.id] || 0) + pct) / 100;
+      };
+      st.items.forEach(it => {
+        if (it.type !== 'composite') addLeaf(it);
+        (it.children || []).forEach(addLeaf);
+      });
+      stages.filter(x => x.parentStageId === st.id).forEach(sub => {
+        const r = sumStage(sub);
+        total += r.total; med += r.med; acum += r.acum;
+      });
+      return { total, med, acum };
+    };
+    const stageSums = sumStage(stage);
+    const stageTotalWithBdi = stageSums.total;
+    const stageMedidoPeriodo = stageSums.med;
+    const stageValueAcum = stageSums.acum;
     const stageAcumulado = stageValueAcum;
     const stagePctAcum = stageTotalWithBdi > 0 ? (stageAcumulado / stageTotalWithBdi) * 100 : 0;
 
@@ -490,9 +481,23 @@ function OriginalBudgetTab({
               </td>
               <td className="px-2 py-1.5 text-xs text-blue-800 font-semibold" colSpan={4}>{item.description}</td>
               <td className="px-2 py-1.5 text-xs text-right font-semibold text-blue-800">
-                {fmtBRL(calcItemTotalWithBdi(item))}
+                {fmtBRL((item.children || []).reduce((a, c) => a + calcItemTotalWithBdi(c), 0))}
               </td>
-              {selectedPeriodId ? <td colSpan={5} /> : <td colSpan={5} />}
+              {selectedPeriodId ? (() => {
+                const kids = item.children || [];
+                const tot = kids.reduce((a, c) => a + calcItemTotalWithBdi(c), 0);
+                const med = kids.reduce((a, c) => a + calcItemTotalWithBdi(c) * pctOf(c.id) / 100, 0);
+                const acum = kids.reduce((a, c) => a + calcItemTotalWithBdi(c) * Math.min(100, (historicalAccumMap[c.id] || 0) + pctOf(c.id)) / 100, 0);
+                return (
+                  <>
+                    <td />
+                    <td className="px-2 py-1.5 text-xs text-right font-semibold text-blue-800">{fmtBRL(med)}</td>
+                    <td className="px-2 py-1.5 text-xs text-center font-semibold text-blue-800">{fmtPct(tot > 0 ? acum / tot * 100 : 0)}</td>
+                    <td className="px-2 py-1.5 text-xs text-right font-semibold text-blue-800">{fmtBRL(acum)}</td>
+                    <td className="px-2 py-1.5 text-xs text-right font-semibold text-blue-800">{fmtBRL(tot - acum)}</td>
+                  </>
+                );
+              })() : <td colSpan={5} />}
             </tr>
           );
           item.children?.forEach((child, ci) => {
