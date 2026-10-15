@@ -598,7 +598,9 @@ export default function BudgetForm() {
       const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
       
       // BDI composto TCU/SINAPI
-      const bdiMultiplier = calcBDIMultiplier();
+      // Incremento adicional/desconto por item entram SOMADOS no BDI (fórmula canônica,
+      // igual à tela de Medições, servidor e exportações).
+      const bdiMultiplier = calcBDIMultiplier(Number(itemConfig.additionalIncrement) || 0, Number(itemConfig.discount) || 0);
       
       // Aplicar materialAdjustment antes do BDI — direto de item.materialAdjustment
       // (budget_items), mesma fonte usada pelo servidor em recalculateBudgetTotals/
@@ -621,18 +623,7 @@ export default function BudgetForm() {
       const laborAdjPct = Number(item.laborAdjustment) || 0;
 
       // Total de M.O. = labor com BDI + equipment/service/other com BDI, com ajuste M.O.
-      let totalLaborItem = (laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI) * (1 + laborAdjPct / 100);
-
-      // Aplicar incremento adicional e desconto se configurado (já embutido em bdiMultiplier
-      // via calcBDIMultiplier(additionalIncrement, discount) seria o ideal, mas esta função
-      // usa calcBDIMultiplier() sem args — mantém compatibilidade com o comportamento anterior
-      // para incremento/desconto, que são aplicados sobre a M.O. já ajustada).
-      const additionalIncrement = itemConfig.additionalIncrement || 0;
-      const discount = itemConfig.discount || 0;
-      if (additionalIncrement > 0 || discount > 0) {
-        const adjustmentMultiplier = 1 + (additionalIncrement - discount) / 100;
-        totalLaborItem = totalLaborItem * adjustmentMultiplier;
-      }
+      const totalLaborItem = (laborWithBDI + equipmentWithBDI + serviceWithBDI + otherWithBDI) * (1 + laborAdjPct / 100);
 
       // Somar ao total geral
       totalMaterialWithBDI += materialWithBDI * qty;
