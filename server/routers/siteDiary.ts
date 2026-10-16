@@ -517,6 +517,76 @@ export const clientPortalRouter = router({
       return loadEntriesWithDetails(await listEntryIdsForBudget(input.budgetId));
     }),
 
+  // Evolução da obra para o cliente: % geral, % por etapa e histórico de medições
+  // FECHADAS. Nunca devolve valores em R$ — só percentuais.
+  progress: clientProcedure
+    .input(z.object({ budgetId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertClientBudgetAccess(input.budgetId, ctx.clientUser.id, ctx.clientUser.clientId);
+      await assertBudgetInExecution(input.budgetId);
+      const g = (r: any, k: string) => r?.[k] ?? r?.[k.toLowerCase()];
+      const id = input.budgetId;
+
+      const b: any[] = await rawQuery(`SELECT totalCost FROM budgets WHERE id = ? LIMIT 1`, [id]);
+      const add: any[] = await rawQuery(`SELECT id, totalCostWithBdi FROM budget_additives WHERE budgetId = ? AND status = 'aprovado'`, [id]);
+      const total = Number(g(b[0], "totalCost") || 0) + add.reduce((a, x) => a + Number(g(x, "totalCostWithBdi") || 0), 0);
+
+      // Medições fechadas (histórico) e valor medido por período
+      const periods: any[] = await rawQuery(
+        `SELECT id, periodNumber, name, startDate, endDate, status FROM measurement_periods WHERE budgetId = ? ORDER BY periodNumber`, [id]);
+      const perVal: any[] = await rawQuery(
+        `SELECT periodId, COALESCE(SUM(valueMeasured),0) AS v FROM measurement_items WHERE budgetId = ? GROUP BY periodId`, [id]);
+      const valMap = new Map<number, number>(perVal.map((r) => [Number(g(r, "periodId")), Number(g(r, "v") || 0)]));
+      if (add.length) {
+        const ids = add.map((x) => Number(g(x, "id")));
+        const am: any[] = await rawQuery(
+          `SELECT periodId, COALESCE(SUM(measuredValue),0) AS v FROM additive_measurements WHERE additiveId IN (${ids.map(() => "?").join(",")}) GROUP BY periodId`, ids);
+        am.forEach((r) => valMap.set(Number(g(r, "periodId")), (valMap.get(Number(g(r, "periodId"))) || 0) + Number(g(r, "v") || 0)));
+      }
+      let acum = 0;
+      const historico = periods.map((p) => {
+        const v = valMap.get(Number(g(p, "id"))) || 0;
+        acum += v;
+        return {
+          numero: Number(g(p, "periodNumber")),
+          nome: String(g(p, "name") || ""),
+          inicio: g(p, "startDate") || null,
+          fim: g(p, "endDate") || null,
+          fechada: String(g(p, "status")) === "closed",
+          percentPeriodo: total > 0 ? (v / total) * 100 : 0,
+          percentAcumulado: total > 0 ? (acum / total) * 100 : 0,
+        };
+      });
+      const totalMedido = acum;
+      const geral = total > 0 ? Math.max(0, Math.min(100, (totalMedido / total) * 100)) : 0;
+
+      // % por etapa principal: média dos % acumulados dos itens, ponderada pelo custo do item
+      const stages: any[] = await rawQuery(`SELECT id, name, parentStageId, \`order\` AS ord FROM budget_stages WHERE budgetId = ?`, [id]);
+      const items: any[] = await rawQuery(`SELECT id, stageId, totalCost FROM budget_items WHERE budgetId = ? AND stageId IS NOT NULL`, [id]);
+      const accRows: any[] = await rawQuery(`SELECT budgetItemId, COALESCE(SUM(percentMeasured),0) AS p FROM measurement_items WHERE budgetId = ? GROUP BY budgetItemId`, [id]);
+      const accMap = new Map<number, number>(accRows.map((r) => [Number(g(r, "budgetItemId")), Number(g(r, "p") || 0)]));
+      const parent = new Map<number, number | null>(stages.map((s) => [Number(g(s, "id")), g(s, "parentStageId") ? Number(g(s, "parentStageId")) : null]));
+      const rootOf = (sid: number): number => { let cur = sid; let guard = 0; while (parent.get(cur) && guard++ < 20) cur = parent.get(cur)!; return cur; };
+      const agg = new Map<number, { w: number; a: number }>();
+      for (const it of items) {
+        const w = Number(g(it, "totalCost") || 0);
+        if (w <= 0) continue;
+        const sid = Number(g(it, "stageId"));
+        if (!parent.has(sid)) continue;
+        const root = rootOf(sid);
+        const pct = Math.min(100, accMap.get(Number(g(it, "id"))) || 0);
+        const cur = agg.get(root) || { w: 0, a: 0 };
+        cur.w += w; cur.a += w * pct / 100;
+        agg.set(root, cur);
+      }
+      const etapas = stages
+        .filter((s) => !g(s, "parentStageId") && agg.has(Number(g(s, "id"))))
+        .sort((x, y) => Number(g(x, "ord") || 0) - Number(g(y, "ord") || 0))
+        .map((s) => { const v = agg.get(Number(g(s, "id")))!; return { nome: String(g(s, "name")), percent: v.w > 0 ? (v.a / v.w) * 100 : 0 }; });
+
+      return { geral, etapas, historico: historico.filter((h) => h.fechada) };
+    }),
+
   me: clientProcedure.query(async ({ ctx }) => {
     return { username: ctx.clientUser.username, email: ctx.clientUser.email, name: ctx.clientUser.name };
   }),

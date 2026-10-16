@@ -6,6 +6,46 @@ import { Card, CardContent } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
 import DiaryBrandHeader from "@/components/DiaryBrandHeader";
 import { ArrowLeft } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
+
+const fmtPct = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+
+function EvolutionPanel({ budgetId }: { budgetId: number }) {
+  const { data, isLoading, error } = trpc.clientPortal.progress.useQuery({ budgetId }, { retry: false });
+  if (isLoading) return <Card><CardContent className="py-8 text-center text-muted-foreground">Carregando evolução...</CardContent></Card>;
+  if (error || !data) return <Card><CardContent className="py-8 text-center text-muted-foreground">Evolução indisponível.</CardContent></Card>;
+  return (
+    <div className="space-y-3">
+      <Card><CardContent className="py-5 space-y-2">
+        <div className="flex items-baseline justify-between"><span className="text-sm text-muted-foreground">Evolução geral da obra</span><span className="text-3xl font-bold">{fmtPct(data.geral)}</span></div>
+        <Progress value={data.geral} className="h-3" />
+      </CardContent></Card>
+      {data.etapas.length > 0 && (
+        <Card><CardContent className="py-4 space-y-3">
+          <div className="text-sm font-semibold">Por etapa</div>
+          {data.etapas.map((e: any) => (
+            <div key={e.nome} className="space-y-1">
+              <div className="flex justify-between text-xs"><span>{e.nome}</span><span className="font-medium">{fmtPct(e.percent)}</span></div>
+              <Progress value={e.percent} className="h-2" />
+            </div>
+          ))}
+        </CardContent></Card>
+      )}
+      {data.historico.length > 0 && (
+        <Card><CardContent className="py-4 space-y-2">
+          <div className="text-sm font-semibold">Medições realizadas</div>
+          {data.historico.map((h: any) => (
+            <div key={h.numero} className="flex justify-between text-xs border-b last:border-0 py-1.5">
+              <span>{h.nome}</span>
+              <span className="text-muted-foreground">período {fmtPct(h.percentPeriodo)} · acumulado <b className="text-foreground">{fmtPct(h.percentAcumulado)}</b></span>
+            </div>
+          ))}
+        </CardContent></Card>
+      )}
+    </div>
+  );
+}
 
 export default function ClientPortalDiary() {
   const { budgetId } = useParams();
@@ -39,15 +79,24 @@ export default function ClientPortalDiary() {
         )}
 
         {!error && (
-          <DiaryEntriesPanel
-            entries={entries}
-            isLoading={isLoading}
-            pdfContext={{
-              title: budget?.title ?? "Obra",
-              subtitle: [budget?.projectName, budget?.location].filter(Boolean).join(" · ") || undefined,
-            }}
-            emptyMessage="Ainda não há registros nesta obra."
-          />
+          <Tabs defaultValue="evolucao">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="evolucao">Evolução da obra</TabsTrigger>
+              <TabsTrigger value="diario">Diário de obras</TabsTrigger>
+            </TabsList>
+            <TabsContent value="evolucao" className="mt-3"><EvolutionPanel budgetId={pid} /></TabsContent>
+            <TabsContent value="diario" className="mt-3">
+              <DiaryEntriesPanel
+                entries={entries}
+                isLoading={isLoading}
+                pdfContext={{
+                  title: budget?.title ?? "Obra",
+                  subtitle: [budget?.projectName, budget?.location].filter(Boolean).join(" · ") || undefined,
+                }}
+                emptyMessage="Ainda não há registros nesta obra."
+              />
+            </TabsContent>
+          </Tabs>
         )}
       </div>
     </div>
