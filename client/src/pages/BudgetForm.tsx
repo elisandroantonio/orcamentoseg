@@ -5035,7 +5035,7 @@ function SiteVisibilityCard({ budgetId }: { budgetId: number }) {
             <Label>Tipo</Label>
             <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.siteCategory} onChange={(e) => setForm({ ...form, siteCategory: e.target.value })}>
               <option value="">—</option>
-              <option>Frigorífico</option><option>Industrial</option><option>Residencial</option><option>Comercial</option><option>Projeto</option>
+              <option>Frigorífico</option><option>Industrial</option><option value="Hospitalar">Hospitalar / Alta Complexidade</option><option>Residencial</option><option>Comercial</option><option>Projeto</option>
             </select>
           </div>
         </div>
