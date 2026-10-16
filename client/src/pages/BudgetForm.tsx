@@ -1808,6 +1808,8 @@ export default function BudgetForm() {
                     </div>
                   </div>
 
+                  {budgetId && <SiteVisibilityCard budgetId={budgetId} />}
+
                   <div className="space-y-2">
                     <Label htmlFor="observations">Observações</Label>
                     <Textarea 
@@ -4996,5 +4998,49 @@ export default function BudgetForm() {
       </Dialog>
 
     </DashboardLayout>
+  );
+}
+
+
+/** Controla se a obra aparece em "Obras em Andamento" no site público. Opt-in. */
+function SiteVisibilityCard({ budgetId }: { budgetId: number }) {
+  const utils = trpc.useUtils();
+  const { data } = trpc.budgetSite.get.useQuery({ id: budgetId });
+  const save = trpc.budgetSite.update.useMutation({
+    onSuccess: () => { utils.budgetSite.get.invalidate({ id: budgetId }); toast.success("Site atualizado"); },
+    onError: (e) => toast.error("Erro ao salvar: " + e.message),
+  });
+  const [form, setForm] = useState({ showOnSite: false, siteTitle: "", siteCity: "", siteCategory: "" });
+  useEffect(() => { if (data) setForm(data); }, [data]);
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <label className="flex items-center gap-2 text-sm font-medium">
+        <input type="checkbox" checked={form.showOnSite} onChange={(e) => setForm({ ...form, showOnSite: e.target.checked })} />
+        Mostrar no site (Obras em Andamento)
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Aparece só se o Status da Obra for "Em Execução". O site mostra apenas o nome público, cidade, tipo e a % de evolução — nunca valores nem o nome do cliente.
+      </p>
+      {form.showOnSite && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label>Nome público da obra</Label>
+            <Input value={form.siteTitle} onChange={(e) => setForm({ ...form, siteTitle: e.target.value })} placeholder="Ex.: Reforma de hospital" />
+          </div>
+          <div className="space-y-1">
+            <Label>Cidade</Label>
+            <Input value={form.siteCity} onChange={(e) => setForm({ ...form, siteCity: e.target.value })} placeholder="Ex.: Chapecó/SC" />
+          </div>
+          <div className="space-y-1">
+            <Label>Tipo</Label>
+            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.siteCategory} onChange={(e) => setForm({ ...form, siteCategory: e.target.value })}>
+              <option value="">—</option>
+              <option>Frigorífico</option><option>Industrial</option><option>Residencial</option><option>Comercial</option><option>Projeto</option>
+            </select>
+          </div>
+        </div>
+      )}
+      <Button type="button" size="sm" onClick={() => save.mutate({ id: budgetId, ...form })} disabled={save.isPending}>Salvar visibilidade no site</Button>
+    </div>
   );
 }

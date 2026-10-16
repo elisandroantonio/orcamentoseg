@@ -5091,6 +5091,40 @@ export const appRouter = router({
       }),
   }),
 
+  // ---- Site público: "Obras em Andamento" (opt-in por obra) ----
+  budgetSite: router({
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const rows: any[] = await db.rawQuery(
+          `SELECT showOnSite, siteTitle, siteCity, siteCategory FROM budgets WHERE id = ? AND userId = ?`,
+          [input.id, ctx.user.id]
+        );
+        const r = rows[0] || {};
+        return {
+          showOnSite: Number(r.showOnSite ?? r.showonsite ?? 0) === 1,
+          siteTitle: (r.siteTitle ?? r.sitetitle ?? "") as string,
+          siteCity: (r.siteCity ?? r.sitecity ?? "") as string,
+          siteCategory: (r.siteCategory ?? r.sitecategory ?? "") as string,
+        };
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        showOnSite: z.boolean(),
+        siteTitle: z.string().max(255).optional(),
+        siteCity: z.string().max(120).optional(),
+        siteCategory: z.string().max(40).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await db.rawQuery(
+          `UPDATE budgets SET showOnSite = ?, siteTitle = ?, siteCity = ?, siteCategory = ? WHERE id = ? AND userId = ?`,
+          [input.showOnSite ? 1 : 0, input.siteTitle?.trim() || null, input.siteCity?.trim() || null, input.siteCategory?.trim() || null, input.id, ctx.user.id]
+        );
+        return { success: true };
+      }),
+  }),
+
   // ---- Congelamento de Orçamento ----
   budgetFreeze: router({
     freeze: protectedProcedure

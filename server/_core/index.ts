@@ -8,6 +8,7 @@ import { registerDevAuthRoute } from "./devAuth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerClientAuthRoutes } from "./clientAuth";
 import { registerFieldAuthRoutes } from "./fieldAuth";
+import { registerPublicSiteRoutes } from "./publicSite";
 import { registerSiteDiaryPhotoRoute } from "./diaryPhotoRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -38,6 +39,13 @@ async function runSafeMigrations() {
     // Adicionar includeMaterial na tabela budgets se não existir
     await rawQuery(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS includeMaterial tinyint NOT NULL DEFAULT 1`);
     console.log('[Migration] includeMaterial column ensured in budgets table');
+    // Site público (construtoraeg.com.br): obras marcadas para aparecer em "Obras em Andamento".
+    // Opt-in por obra (padrão 0 = não aparece) e com nome/cidade públicos separados do título interno.
+    await rawQuery(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS showOnSite TINYINT NOT NULL DEFAULT 0`);
+    await rawQuery(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS siteTitle VARCHAR(255) NULL`);
+    await rawQuery(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS siteCity VARCHAR(120) NULL`);
+    await rawQuery(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS siteCategory VARCHAR(40) NULL`);
+    console.log('[Migration] site público columns ensured in budgets table');
     // Ordem de exibição do Gantt, separada do `order` usado na planilha do
     // orçamento — ver comentário em drizzle/schema.ts.
     await rawQuery(`ALTER TABLE budget_stages ADD COLUMN IF NOT EXISTS scheduleOrder INT NULL`);
@@ -317,6 +325,8 @@ async function startServer() {
   registerClientAuthRoutes(app);
   // Login de campo por obra (mestre/encarregado) — ver fieldAuth.ts
   registerFieldAuthRoutes(app);
+  // API pública (somente leitura) para o site institucional — ver publicSite.ts
+  registerPublicSiteRoutes(app);
   // Serve as fotos do Diário de Obras com checagem de permissão (equipe
   // interna dono do projeto, ou cliente com acesso àquele projeto)
   registerSiteDiaryPhotoRoute(app);

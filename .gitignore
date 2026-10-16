@@ -120,3 +120,6 @@ _checkpoints/
 
 # Pasta com o dump SQL da migração de recuperação do Manus (dados reais, não é código-fonte)
 _migracao-manus/
+
+# Site público tem repositório próprio
+SITE-EG/
