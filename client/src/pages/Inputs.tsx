@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
+import { matchesAllWords } from "@/lib/search";
 import { Plus, Pencil, Trash2, Search, Check, X, DollarSign } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useMemo } from "react";
@@ -87,9 +88,7 @@ export default function Inputs() {
     const term = searchTerm.trim().toLowerCase();
 
     const filtered = inputs.filter((input) => {
-      const matchesSearch = term === "" ||
-        input.description.toLowerCase().includes(term) ||
-        (input.code && input.code.toLowerCase().includes(term));
+      const matchesSearch = matchesAllWords(term, input.description, input.code);
 
       const matchesType = filterType === "all" || input.type === filterType;
 

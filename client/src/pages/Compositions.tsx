@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
+import { matchesAllWords } from "@/lib/search";
 import { Plus, Search, ChevronDown, ChevronRight, Save, Pencil, Edit, Trash2, Copy, Download } from "lucide-react";
 import * as XLSX from 'xlsx';
 import { Link } from "wouter";
@@ -225,9 +226,7 @@ export default function Compositions() {
     if (!compositions) return [];
     
     return compositions.filter((comp) => {
-      const matchesSearch = searchTerm === "" || 
-        comp.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (comp.code && comp.code.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesSearch = matchesAllWords(searchTerm, comp.description, comp.code);
       
       const matchesCategory = selectedCategory === "all" || 
         comp.categoryId?.toString() === selectedCategory;
