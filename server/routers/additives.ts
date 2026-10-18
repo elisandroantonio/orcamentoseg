@@ -228,6 +228,30 @@ export const additivesRouter = router({
       return { recalculated: additives.length };
     }),
 
+  // Resumo p/ a evolução da obra: total dos aditivos aprovados + quanto já foi
+  // medido neles (todos os períodos). Mesma conta do portal do cliente e do site.
+  progressSummary: protectedProcedure
+    .input(z.object({ budgetId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await assertBudgetOwner(input.budgetId, ctx.user.id);
+      const g = (r: any, k: string) => r?.[k] ?? r?.[k.toLowerCase()];
+      const add: any[] = await rawQuery(
+        `SELECT id, totalCostWithBdi FROM budget_additives WHERE budgetId = ? AND status = 'aprovado'`,
+        [input.budgetId]
+      );
+      const approvedTotal = add.reduce((a, x) => a + Number(g(x, "totalCostWithBdi") || 0), 0);
+      let measuredTotal = 0;
+      if (add.length) {
+        const ids = add.map((x) => Number(g(x, "id")));
+        const am: any[] = await rawQuery(
+          `SELECT COALESCE(SUM(measuredValue),0) AS v FROM additive_measurements WHERE additiveId IN (${ids.map(() => "?").join(",")})`,
+          ids
+        );
+        measuredTotal = Number(g(am[0], "v") || 0);
+      }
+      return { approvedTotal, measuredTotal, count: add.length };
+    }),
+
   // ── CRUD de Aditivos ──────────────────────────────────────────────────────
 
   list: protectedProcedure

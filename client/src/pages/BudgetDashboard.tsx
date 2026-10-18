@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSaldoMedido, useAvancoFisico } from "@/hooks/useBudgetProgress";
+import { useSaldoMedido, useAvancoFisico, useAdditivesProgress } from "@/hooks/useBudgetProgress";
 import { PlanejadoRealizadoChart } from "@/components/budget/PlanejadoRealizadoChart";
 import {
   ArrowLeft,
@@ -83,6 +83,8 @@ export default function BudgetDashboard() {
     includeMaterial: includeMaterialForProgress,
   });
   const avancoFisico = useAvancoFisico(budgetId, stagesData, budget);
+  // Aditivos aprovados entram no contrato e no saldo medido (igual ao portal do cliente)
+  const addProgress = useAdditivesProgress(budgetId);
 
   if (isLoading) {
     return (
@@ -164,8 +166,11 @@ export default function BudgetDashboard() {
   const totalItems = stagesData.reduce((acc: number, s: any) => acc + (s.items?.length || 0), 0);
 
   // Aditivos aprovados
-  const additivesApproved = (additives || []).filter((a: any) => a.status === "approved");
+  const additivesApproved = (additives || []).filter((a: any) => a.status === "aprovado" || a.status === "approved");
   const additivesTotal = additivesApproved.reduce((acc: number, a: any) => acc + Number(a.totalCostWithBdi || 0), 0);
+
+  const contratoComAditivos = totalWithBDI + addProgress.approvedTotal;
+  const saldoMedidoComAditivos = saldoMedidoTotal + addProgress.measuredTotal;
 
   // Última medição
   const lastPeriod = measurementPeriods && measurementPeriods.length > 0
@@ -329,30 +334,30 @@ export default function BudgetDashboard() {
           <div className="bg-slate-800 rounded-lg p-3 text-white">
             <div className="text-xs text-slate-300 mb-1">Valor do Contrato</div>
             <div className="text-base font-bold">
-              R$ {totalWithBDI.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              R$ {contratoComAditivos.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div className="bg-blue-700 rounded-lg p-3 text-white">
             <div className="text-xs text-blue-200 mb-1">Saldo Medido</div>
             <div className="text-base font-bold">
-              R$ {saldoMedidoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              R$ {saldoMedidoComAditivos.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div className="bg-orange-700 rounded-lg p-3 text-white">
             <div className="text-xs text-orange-200 mb-1">Saldo Residual (a medir)</div>
             <div className="text-base font-bold">
-              R$ {Math.max(0, totalWithBDI - saldoMedidoTotal).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              R$ {Math.max(0, contratoComAditivos - saldoMedidoComAditivos).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div className="bg-emerald-700 rounded-lg p-3 text-white">
             <div className="text-xs text-emerald-200 mb-1">Evolução da Obra</div>
             <div className="text-base font-bold">
-              {(totalWithBDI > 0 ? (saldoMedidoTotal / totalWithBDI) * 100 : 0).toFixed(1)}%
+              {(contratoComAditivos > 0 ? (saldoMedidoComAditivos / contratoComAditivos) * 100 : 0).toFixed(1)}%
             </div>
             <div className="mt-1.5 h-1.5 w-full rounded-full bg-emerald-900/50 overflow-hidden">
               <div
                 className="h-full bg-white/80 rounded-full"
-                style={{ width: `${Math.min(100, Math.max(0, totalWithBDI > 0 ? (saldoMedidoTotal / totalWithBDI) * 100 : 0))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, contratoComAditivos > 0 ? (saldoMedidoComAditivos / contratoComAditivos) * 100 : 0))}%` }}
               />
             </div>
           </div>

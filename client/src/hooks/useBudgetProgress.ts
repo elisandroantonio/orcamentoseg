@@ -287,3 +287,17 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
     };
   }, [stages, budget, measurementPeriodsForChart, allMeasuredItemsForChart]);
 }
+
+// Aditivos aprovados: total contratado e valor já medido (todos os períodos).
+// Usado pra a evolução da obra incluir os aditivos, igual ao portal do cliente.
+export function useAdditivesProgress(budgetId: number) {
+  const { data } = trpc.additives.progressSummary.useQuery(
+    { budgetId },
+    { enabled: !!budgetId }
+  );
+  return {
+    approvedTotal: data?.approvedTotal ?? 0,
+    measuredTotal: data?.measuredTotal ?? 0,
+    count: data?.count ?? 0,
+  };
+}
