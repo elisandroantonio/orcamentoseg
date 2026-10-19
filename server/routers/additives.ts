@@ -30,13 +30,15 @@ async function recalcAdditiveTotals(additiveId: number) {
   // totalCostNoBdi = soma de (unitCost * quantity) de todos os itens
   // totalCostWithBdi = soma com encargos sociais sobre M.O. + BDI aplicado
   
-  // Buscar itens do aditivo (TiDB armazena nomes de colunas em lowercase)
+  // Buscar itens do aditivo (TiDB armazena nomes de colunas em lowercase).
+  // JOIN com additive_stages: ignora itens órfãos (sem etapa), invisíveis na tela,
+  // pra o total gravado bater com o que o usuário vê (cards, PDF).
   const bdiQuery = 'SELECT ai.materialcost, ai.laborcost, ai.equipmentcost, ai.servicecost, ai.othercost,' +
     ' ai.quantity, ai.unitcost, ai.totalcost,' +
     ' ai.applybditomaterial, ai.applybditolabor, ai.aplicarencargossociais,' +
     ' ai.additionalincrement, ai.discount, ai.includematerial,' +
     ' ai.materialadjustment, ai.laboradjustment' +
-    ' FROM additive_items ai WHERE ai.additiveid = ?';
+    ' FROM additive_items ai JOIN additive_stages ast ON ast.id = ai.stageid WHERE ai.additiveid = ?';
   const items = await rawQuery(bdiQuery, [additiveId]);
 
   // Buscar parâmetros de BDI do orçamento pai
