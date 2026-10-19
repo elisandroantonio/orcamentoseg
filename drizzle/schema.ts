@@ -774,6 +774,7 @@ export const additiveItems = mysqlTable("additive_items", {
   laborAdjustment: decimal("laborAdjustment", { precision: 10, scale: 2 }).notNull().default("0"), // % de ajuste sobre M.O. (ex: 55.4 = +55,4%)
   aplicarEncargosSociais: tinyint("aplicarEncargosSociais").notNull().default(1),
   includeMaterial: tinyint("includeMaterial").notNull().default(1), // 1 = incluir material, 0 = material por conta do cliente
+  includeLabor: tinyint("includeLabor").notNull().default(1), // 1 = incluir mão de obra (M.O.), 0 = M.O. por conta do cliente
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (table) => ({
   additiveIdIdx: index("additive_items_additiveId_idx").on(table.additiveId),

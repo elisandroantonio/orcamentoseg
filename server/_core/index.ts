@@ -55,6 +55,7 @@ async function runSafeMigrations() {
     console.log('[Migration] laborAdjustment column ensured in budget_items table');
     // Adicionar includeMaterial na tabela additive_items se não existir
     await rawQuery(`ALTER TABLE additive_items ADD COLUMN IF NOT EXISTS includeMaterial tinyint NOT NULL DEFAULT 1`);
+    await rawQuery(`ALTER TABLE additive_items ADD COLUMN IF NOT EXISTS includeLabor tinyint NOT NULL DEFAULT 1`);
     console.log('[Migration] includeMaterial column ensured in additive_items table');
     // Garantir que a tabela additive_measurements existe com periodId (FK para measurement_periods)
     await rawQuery(`CREATE TABLE IF NOT EXISTS additive_measurements (

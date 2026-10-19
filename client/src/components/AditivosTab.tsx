@@ -204,7 +204,8 @@ export function AditivosTab({
         const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
         // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor) —
         // mesma regra do orçamento normal.
-        const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase;
+        const laborOn = Number(item.includeLabor) !== 0;
+        const laborWithCharges = laborOn ? (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase : 0;
         const labor = laborWithCharges * labAdjMultiplier;
         const applyMat = Number(item.applyBdiToMaterial) !== 0;
         const applyLab = Number(item.applyBdiToLabor) !== 0;
@@ -229,7 +230,7 @@ export function AditivosTab({
             ? applyBdiToAdditiveItem(item)
             : {
                 materialCost: Number(item.includeMaterial) === 0 ? 0 : Number(item.materialCost) || 0,
-                laborCost:
+                laborCost: Number(item.includeLabor) === 0 ? 0 :
                   (Number(item.laborCost) || 0) +
                   (Number(item.equipmentCost) || 0) +
                   (Number(item.serviceCost) || 0) +

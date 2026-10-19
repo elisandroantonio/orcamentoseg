@@ -54,7 +54,9 @@ function calcItemBdiBreakdown(item: any, bdiMultiplier: number, socialCharges: n
   // mesma regra do orçamento normal. Equipamento/serviço/outros entram no
   // "balde" de M.O. do aditivo (recebem o ajuste de M.O. junto), mas não
   // recebem encargos sociais.
-  const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase;
+  // includeLabor = 0: mão de obra (M.O. + equip./serviço/outros) por conta do cliente
+  const laborOn = Number(item.includeLabor) !== 0;
+  const laborWithCharges = laborOn ? (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase : 0;
   const labor = laborWithCharges * labAdjMultiplier;
   const applyMat = Number(item.applyBdiToMaterial) !== 0;
   const applyLab = Number(item.applyBdiToLabor) !== 0;
@@ -458,7 +460,7 @@ export function AditivoEditor({
       // totalNoBdi respeita includeMaterial: exclui material se desabilitado
       const _rawMat = item.materialCost || 0;
       const _mat = (item.includeMaterial === 0 || item.includeMaterial === false) ? 0 : _rawMat;
-      const _lab = (item.laborCost || 0) + (item.equipmentCost || 0) + (item.serviceCost || 0) + (item.otherCost || 0);
+      const _lab = (item.includeLabor === 0 || item.includeLabor === false) ? 0 : (item.laborCost || 0) + (item.equipmentCost || 0) + (item.serviceCost || 0) + (item.otherCost || 0);
       const _qty = item.quantity || 1;
       const totalNoBdi = (_mat + _lab) * _qty;
 
@@ -503,7 +505,7 @@ export function AditivoEditor({
                   </Button>
                   <Popover open={bdiPopoverItemId === item.id} onOpenChange={(open) => setBdiPopoverItemId(open ? item.id : null)}>
                     <PopoverTrigger asChild>
-                      <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
+                      <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || item.includeLabor === 0 || item.includeLabor === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
                         <SlidersHorizontal className="h-3 w-3" />
                       </Button>
                     </PopoverTrigger>
@@ -530,6 +532,11 @@ export function AditivoEditor({
                             <Checkbox id={`inclMat2-${item.id}`} checked={Number(item.includeMaterial) !== 0}
                               onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeMaterial: v === true })} />
                             <Label htmlFor={`inclMat2-${item.id}`} className="text-xs cursor-pointer">Incluir Material no Orçamento</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Checkbox id={`inclLab2-${item.id}`} checked={Number(item.includeLabor) !== 0}
+                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeLabor: v === true })} />
+                            <Label htmlFor={`inclLab2-${item.id}`} className="text-xs cursor-pointer">Incluir Mão de Obra no Orçamento</Label>
                           </div>
                         </div>
                         <div className="space-y-2 pt-1 border-t border-gray-100">
@@ -708,7 +715,7 @@ export function AditivoEditor({
                     </Button>
                     <Popover open={bdiPopoverItemId === item.id} onOpenChange={(open) => setBdiPopoverItemId(open ? item.id : null)}>
                       <PopoverTrigger asChild>
-                        <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
+                        <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || item.includeLabor === 0 || item.includeLabor === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
                           <SlidersHorizontal className="h-3 w-3" />
                         </Button>
                       </PopoverTrigger>
@@ -735,6 +742,11 @@ export function AditivoEditor({
                               <Checkbox id={`inclMat-${item.id}`} checked={Number(item.includeMaterial) !== 0}
                                 onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeMaterial: v === true })} />
                               <Label htmlFor={`inclMat-${item.id}`} className="text-xs cursor-pointer">Incluir Material no Orçamento</Label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Checkbox id={`inclLab-${item.id}`} checked={Number(item.includeLabor) !== 0}
+                                onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeLabor: v === true })} />
+                              <Label htmlFor={`inclLab-${item.id}`} className="text-xs cursor-pointer">Incluir Mão de Obra no Orçamento</Label>
                             </div>
                           </div>
                           <div className="space-y-2 pt-1 border-t border-gray-100">
@@ -795,7 +807,7 @@ export function AditivoEditor({
     // stageTotalNoBdi respeita includeMaterial: exclui material se desabilitado
     const calcItemNoBdi = (i: any) => {
       const mat = (i.includeMaterial === 0 || i.includeMaterial === false) ? 0 : (i.materialCost || 0);
-      const lab = (i.laborCost || 0) + (i.equipmentCost || 0) + (i.serviceCost || 0) + (i.otherCost || 0);
+      const lab = (i.includeLabor === 0 || i.includeLabor === false) ? 0 : (i.laborCost || 0) + (i.equipmentCost || 0) + (i.serviceCost || 0) + (i.otherCost || 0);
       return (mat + lab) * (i.quantity || 1);
     };
     const stageTotalNoBdi = (stage.items || []).reduce((sum: number, item: any) => sum + calcItemNoBdi(item), 0)
@@ -947,7 +959,7 @@ export function AditivoEditor({
         stages.forEach(walk);
         const val = (i: any) => viewMode === "com-bdi"
           ? calcItemTotalWithBdi(i, bdiMultiplier, socialCharges)
-          : ((Number(i.includeMaterial) === 0 ? 0 : (i.materialCost || 0)) + (i.laborCost || 0) + (i.equipmentCost || 0) + (i.serviceCost || 0) + (i.otherCost || 0)) * (i.quantity ?? 0);
+          : ((Number(i.includeMaterial) === 0 ? 0 : (i.materialCost || 0)) + (Number(i.includeLabor) === 0 ? 0 : (i.laborCost || 0) + (i.equipmentCost || 0) + (i.serviceCost || 0) + (i.otherCost || 0))) * (i.quantity ?? 0);
         const credits = all.filter(i => (i.quantity ?? 0) < 0).reduce((a, i) => a + val(i), 0);
         const additions = all.filter(i => (i.quantity ?? 0) >= 0).reduce((a, i) => a + val(i), 0);
         if (credits === 0) return null;

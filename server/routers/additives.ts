@@ -36,7 +36,7 @@ async function recalcAdditiveTotals(additiveId: number) {
   const bdiQuery = 'SELECT ai.materialcost, ai.laborcost, ai.equipmentcost, ai.servicecost, ai.othercost,' +
     ' ai.quantity, ai.unitcost, ai.totalcost,' +
     ' ai.applybditomaterial, ai.applybditolabor, ai.aplicarencargossociais,' +
-    ' ai.additionalincrement, ai.discount, ai.includematerial,' +
+    ' ai.additionalincrement, ai.discount, ai.includematerial, ai.includelabor,' +
     ' ai.materialadjustment, ai.laboradjustment' +
     ' FROM additive_items ai JOIN additive_stages ast ON ast.id = ai.stageid WHERE ai.additiveid = ?';
   const items = await rawQuery(bdiQuery, [additiveId]);
@@ -79,7 +79,9 @@ async function recalcAdditiveTotals(additiveId: number) {
     const nonLaborBase = parseFloat(item.equipmentcost || "0")
                 + parseFloat(item.servicecost || "0")
                 + parseFloat(item.othercost || "0");
-    const laborBase = rawLabor + nonLaborBase;
+    // includelabor = 0: mão de obra (M.O. + equipamento/serviço/outros) por conta do cliente
+    const laborOn = Number(item.includelabor) !== 0;
+    const laborBase = laborOn ? rawLabor + nonLaborBase : 0;
     // totalNoBdi respeita includeMaterial: exclui material se desabilitado
     totalNoBdi += (materialBase + laborBase) * qty;
     // Ajuste de Material e M.O. (equalização) — mesmo conceito da aba Comp. BDI
@@ -91,7 +93,7 @@ async function recalcAdditiveTotals(additiveId: number) {
     // mesma regra do orçamento normal. Antes incidiam sobre laborBase inteiro
     // (mão de obra + equipamento + serviço + outros), inflando encargos sobre
     // custos que não são mão de obra.
-    const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase;
+    const laborWithCharges = laborOn ? (rawLabor * (1 + (aplicarEncargos ? socialCharges : 0) / 100)) + nonLaborBase : 0;
     const labor = laborWithCharges * labAdjMultiplier;
     const applyMat = Number(item.applybditomaterial) !== 0;
     const applyLab = Number(item.applybditolabor) !== 0;
@@ -392,6 +394,7 @@ export const additivesRouter = router({
             applyBdiToLabor: Number(raw.applyBdiToLabor ?? raw.applybditolabor ?? 1),
             aplicarEncargosSociais: Number(raw.aplicarEncargosSociais ?? raw.aplicarencargossociais ?? 1),
             includeMaterial: Number(raw.includeMaterial ?? raw.includematerial ?? 1),
+            includeLabor: Number(raw.includeLabor ?? raw.includelabor ?? 1),
           });
         }
       }
@@ -587,6 +590,7 @@ export const additivesRouter = router({
       laborAdjustment: z.number().optional(),
       aplicarEncargosSociais: z.boolean().optional(),
       includeMaterial: z.boolean().optional(),
+      includeLabor: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const rows = await rawQuery(
@@ -617,6 +621,7 @@ export const additivesRouter = router({
       if (input.laborAdjustment !== undefined) { sets.push('laboradjustment = ?'); values.push(input.laborAdjustment); }
       if (input.aplicarEncargosSociais !== undefined) { sets.push('aplicarencargossociais = ?'); values.push(input.aplicarEncargosSociais ? 1 : 0); }
       if (input.includeMaterial !== undefined) { sets.push('includematerial = ?'); values.push(input.includeMaterial ? 1 : 0); }
+      if (input.includeLabor !== undefined) { sets.push('includelabor = ?'); values.push(input.includeLabor ? 1 : 0); }
       // Recalcular unitCost e totalCost quando custos de componentes ou quantidade mudam
       const needsRecalc = input.quantity !== undefined || input.unitCost !== undefined ||
         input.materialCost !== undefined || input.laborCost !== undefined ||

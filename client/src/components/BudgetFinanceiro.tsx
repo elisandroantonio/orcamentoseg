@@ -704,7 +704,9 @@ function AdditiveMeasurementTab({
     // Encargos Sociais incidem SOMENTE sobre a mão de obra pura (rawLabor) —
     // mesma regra do orçamento normal. Equipamento/serviço/outros continuam no
     // mesmo balde de M.O. (recebem laborAdjustment junto), só não recebem encargos.
-    const laborWithCharges = (rawLabor * (1 + (aplicarEncargos ? budgetParams.socialCharges : 0) / 100)) + nonLaborBase;
+    // includeLabor = 0: M.O. por conta do cliente
+    const laborOn = Number(item.includeLabor ?? 1) !== 0;
+    const laborWithCharges = !laborOn ? 0 : ((rawLabor * (1 + (aplicarEncargos ? budgetParams.socialCharges : 0) / 100)) + nonLaborBase);
     const labor = laborWithCharges * labAdjMultiplier;
     const bdiMult = calcBDIMultiplier();
     const matFinal = applyBdiToMaterial ? material * bdiMult : material;
