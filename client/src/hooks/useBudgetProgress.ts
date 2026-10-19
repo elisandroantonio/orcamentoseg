@@ -218,8 +218,9 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
         const pct = itemAccumPercent[item.id] || 0;
         value += (itemTotalWithBdiLocal(item) * pct) / 100;
       });
+      // Sem data no período: considera "hoje" (medição salva conta mesmo assim)
       const periodDate = p.endDate || p.startDate;
-      if (periodDate) measuredSnapshots.push({ date: new Date(periodDate), value });
+      measuredSnapshots.push({ date: periodDate ? new Date(periodDate) : new Date(), value });
     });
 
     const realizadoAt = (d: Date): number | null => {
@@ -262,9 +263,15 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
     }
 
+    // Valor medido acumulado até agora = última medição salva (aberta OU fechada).
+    const realizadoNowValue = measuredSnapshots.length > 0 ? measuredSnapshots[measuredSnapshots.length - 1].value : null;
     const chartData: AvancoFisicoChartPoint[] = months.map(({ label, monthEnd }) => {
       const planejadoValue = plannedValueAt(monthEnd);
-      const realizadoValue = monthEnd <= today ? realizadoAt(monthEnd) : null;
+      // Meses passados: valor na data de fim do mês. Mês atual: sempre o valor
+      // mais recente salvo (não depende do fim do período de medição, então o
+      // gráfico avança assim que a medição é salva/atualizada, sem fechar).
+      const isCurrentMonth = monthEnd > today && monthEnd.getFullYear() === today.getFullYear() && monthEnd.getMonth() === today.getMonth();
+      const realizadoValue = isCurrentMonth ? realizadoNowValue : monthEnd <= today ? realizadoAt(monthEnd) : null;
       return {
         period: label,
         planejado: (planejadoValue / totalBudgetDated) * 100,
