@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import StagePicker from "@/components/StagePicker";
-import { Camera, Plus, X } from "lucide-react";
+import { Camera, Image as ImageIcon, Plus, X } from "lucide-react";
 
 export const WEATHER_LABEL: Record<string, string> = {
   bom: "Bom",
@@ -78,6 +78,7 @@ export default function DiaryEntryDialog({
   const [labor, setLabor] = useState<LaborRow[]>([{ role: "", count: "" }]);
   const [photos, setPhotos] = useState<{ dataUrl: string; previewUrl: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Ao abrir em modo edição, preenche com os dados da entrada.
   useEffect(() => {
@@ -264,11 +265,23 @@ export default function DiaryEntryDialog({
 
           <div className="space-y-1">
             <Label>Fotos</Label>
+            {/* Câmera (abre direto a câmera no celular) */}
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
               capture="environment"
+              className="hidden"
+              onChange={e => {
+                handlePhotoSelect(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            {/* Galeria (sem "capture": abre a galeria/arquivos, aceita várias fotos) */}
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
               multiple
               className="hidden"
               onChange={e => {
@@ -276,9 +289,14 @@ export default function DiaryEntryDialog({
                 e.target.value = "";
               }}
             />
-            <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="w-full">
-              <Camera className="h-4 w-4 mr-2" /> Tirar foto / escolher da galeria
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                <Camera className="h-4 w-4 mr-2" /> Tirar foto
+              </Button>
+              <Button type="button" variant="outline" onClick={() => galleryInputRef.current?.click()}>
+                <ImageIcon className="h-4 w-4 mr-2" /> Galeria
+              </Button>
+            </div>
             {!!existingPhotos.length && (
               <div className="grid grid-cols-4 gap-2 mt-2">
                 {existingPhotos.map(p => (
