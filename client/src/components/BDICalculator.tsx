@@ -300,9 +300,9 @@ const TabTributarioPresumido = memo(() => {
       </div>
       <SectionLabel>IRPJ e CSLL</SectionLabel>
       <InfoAlert><strong>{tipoLabel}</strong><br />
-        IRPJ efetivo: {fmtP(s.presIRPJ)}% (presunção) × {fmtP(s.aliqIRPJ)}% = <strong>{fmtP(s.presIRPJ / 100 * s.aliqIRPJ)}</strong>
+        IRPJ efetivo: {fmtP(s.presIRPJ)} (presunção) × {fmtP(s.aliqIRPJ)} = <strong>{fmtP(s.presIRPJ / 100 * s.aliqIRPJ)}</strong>
         {adicIRPJ() > 0 && <> + adicional 10%: <strong>{fmtP(adicIRPJ())}</strong></>}<br />
-        CSLL efetivo: {fmtP(s.presCSLL)}% × {fmtP(s.aliqCSLL)}% = <strong>{fmtP(csll)}</strong>
+        CSLL efetivo: {fmtP(s.presCSLL)} × {fmtP(s.aliqCSLL)} = <strong>{fmtP(csll)}</strong>
       </InfoAlert>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <NumField label="Presunção IRPJ (%)" value={s.presIRPJ} step={1} readOnly hint="8% = global · 32% = parcial/MO. IN RFB 1.700/2017 art.33." />
@@ -387,9 +387,9 @@ const TabTributarioReal = memo(() => {
       </div>
       <SectionLabel>IRPJ e CSLL — sobre o lucro real estimado</SectionLabel>
       <InfoAlert>
-        IRPJ efetivo: {fmtP(s.margemLucroReal)}% (margem) × {fmtP(s.aliqIRPJ)}% = <strong>{fmtP(s.margemLucroReal / 100 * s.aliqIRPJ)}</strong>
+        IRPJ efetivo: {fmtP(s.margemLucroReal)} (margem) × {fmtP(s.aliqIRPJ)} = <strong>{fmtP(s.margemLucroReal / 100 * s.aliqIRPJ)}</strong>
         {adicIRPJ() > 0 && <> + adicional 10%: <strong>{fmtP(adicIRPJ())}</strong></>}<br />
-        CSLL efetivo: {fmtP(s.margemLucroReal)}% × {fmtP(s.aliqCSLL)}% = <strong>{fmtP(csll)}</strong>
+        CSLL efetivo: {fmtP(s.margemLucroReal)} × {fmtP(s.aliqCSLL)} = <strong>{fmtP(csll)}</strong>
       </InfoAlert>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <NumField label="Adicional IRPJ estimado (%)" value={parseFloat(adicIRPJ().toFixed(4))} readOnly hint="10% sobre lucro real > R$ 20.000/mês — Lei 9.249/95 art.3º §1º." />
