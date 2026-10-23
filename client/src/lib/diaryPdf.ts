@@ -396,14 +396,17 @@ export async function generatePeriodPdf(
 ) {
   const sorted = [...entries].sort((a, b) => String(a.entryDate).localeCompare(String(b.entryDate)));
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+  // Período do cabeçalho: usa o filtro escolhido; o que faltar vem do primeiro/último
+  // registro (assim, sem filtro, mostra a semana/intervalo real dos lançamentos).
+  const dates = sorted.map(e => String(e.entryDate).slice(0, 10)).filter(Boolean);
+  const from = range.from || dates[0] || "";
+  const to = range.to || dates[dates.length - 1] || "";
   const period =
-    range.from && range.to
-      ? `Período: ${isoToBr(range.from)} a ${isoToBr(range.to)}`
-      : range.from
-        ? `A partir de ${isoToBr(range.from)}`
-        : range.to
-          ? `Até ${isoToBr(range.to)}`
-          : "Todos os registros";
+    from && to
+      ? from === to
+        ? `Período: ${isoToBr(from)}`
+        : `Período: ${isoToBr(from)} a ${isoToBr(to)}`
+      : "Todos os registros";
   const y = await drawHeader(doc, "DIÁRIO DE OBRAS — RESUMO DO PERÍODO", ctx, period);
   const c: Cursor = {
     doc,
