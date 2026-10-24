@@ -415,6 +415,14 @@ export async function generateBudgetPDF(
         data.cell.styles.fillColor = [219, 234, 254] as [number, number, number];
         data.cell.styles.textColor = [30, 64, 175] as unknown as number; // Azul escuro
         data.cell.styles.fontStyle = "bold";
+      } else if (
+        data.section === "body" && item && !item.isStageHeader && !item.isInput &&
+        parseFloat(item.quantity) < 0
+      ) {
+        // Crédito (quantidade negativa, ex.: aditivos): fundo rosado + texto vinho
+        data.cell.styles.fillColor = [254, 226, 226] as [number, number, number]; // #FEE2E2
+        data.cell.styles.textColor = [153, 27, 27] as unknown as number; // #991B1B
+        data.cell.styles.fontStyle = "bold";
       }
     },
     margin: { left: margin, right: margin },
