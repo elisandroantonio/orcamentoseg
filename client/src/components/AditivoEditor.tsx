@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
   Plus, ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle2, XCircle,
   Settings, Layers, Search, X, SlidersHorizontal, List, Save, RotateCcw, RefreshCw, Download
@@ -214,6 +215,8 @@ export function AditivoEditor({
         items: kind === "item" ? (n.items || []).filter((i: any) => i.id !== id) : n.items,
         children: pruneTree(n.children || [], kind, id),
       }));
+  // Confirmação antes de excluir etapa/item (evita exclusão acidental)
+  const [confirmDelete, setConfirmDelete] = useState<{ kind: "stage" | "item"; id: number; label: string; extra?: string } | null>(null);
   const deleteStage = trpc.additives.deleteStage.useMutation({
     onMutate: async ({ id }) => {
       await utils.additives.getStages.cancel({ additiveId });
@@ -675,7 +678,7 @@ export function AditivoEditor({
                       <RefreshCw className={cn("h-3 w-3", syncItem.isPending && "animate-spin")} />
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={() => deleteItem.mutate({ id: item.id })}>
+                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={() => setConfirmDelete({ kind: "item", id: item.id, label: item.description || "este item" })}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
@@ -798,7 +801,7 @@ export function AditivoEditor({
                       </Button>
                     )}
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400"
-                      onClick={() => deleteItem.mutate({ id: item.id })}>
+                      onClick={() => setConfirmDelete({ kind: "item", id: item.id, label: item.description || "este item" })}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </>
@@ -905,7 +908,7 @@ export function AditivoEditor({
                 </PopoverContent>
               </Popover>
               <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400"
-                onClick={() => deleteStage.mutate({ id: stage.id })}>
+                onClick={() => setConfirmDelete({ kind: "stage", id: stage.id, label: stage.name || "esta etapa", extra: "Todos os itens, composições e sub-etapas dentro dela também serão excluídos." })}>
                 <Trash2 className="h-3 w-3" />
               </Button>
             </div>
@@ -1613,6 +1616,28 @@ export function AditivoEditor({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={confirmDelete !== null} onOpenChange={(o) => { if (!o) setConfirmDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmDelete?.kind === "stage" ? "Excluir etapa?" : "Excluir item?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Você vai excluir <b>{confirmDelete?.label}</b>. {confirmDelete?.extra} Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (!confirmDelete) return;
+                if (confirmDelete.kind === "stage") deleteStage.mutate({ id: confirmDelete.id });
+                else deleteItem.mutate({ id: confirmDelete.id });
+                setConfirmDelete(null);
+              }}>
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
