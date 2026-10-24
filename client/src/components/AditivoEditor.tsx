@@ -464,118 +464,6 @@ export function AditivoEditor({
       const _qty = item.quantity || 1;
       const totalNoBdi = (_mat + _lab) * _qty;
 
-      if (viewMode === "com-bdi") {
-        // Material, M.O. e Total vêm todos do mesmo cálculo agora — ver
-        // calcItemBdiBreakdown (única fonte de verdade).
-        const _bdi = calcItemBdiBreakdown(item, bdiMultiplier, socialCharges);
-        return (
-          <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50/50">
-            <td className="py-2 px-3 text-xs text-gray-400 w-16">{itemNum}</td>
-            <td className="py-2 px-3 text-xs text-gray-700">{item.description}</td>
-            <td className="py-2 px-3 text-xs text-center text-gray-500">{item.quantity}</td>
-            <td className="py-2 px-3 text-xs text-center text-gray-500">{item.unit}</td>
-            <td className="py-2 px-3 text-xs text-right text-gray-600">
-              {formatCurrency(_bdi.material)}
-            </td>
-            <td className="py-2 px-3 text-xs text-right text-gray-600">
-              {formatCurrency(_bdi.labor)}
-            </td>
-            <td className={cn("py-2 px-3 text-xs text-right font-semibold", _bdi.total < 0 ? "text-red-600" : "text-blue-700")}>
-              {formatCurrency(_bdi.total)}
-            </td>
-            {!isFrozen && (
-              <td className="py-2 px-3 text-xs">
-                <div className="flex items-center gap-1">
-                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-gray-400"
-                    title="Editar item"
-                    onClick={() => {
-                      setEditItemForm({
-                        description: item.description || "",
-                        unit: item.unit || "",
-                        quantity: item.quantity || 1,
-                        materialCost: item.materialCost || 0,
-                        laborCost: item.laborCost || 0,
-                        equipmentCost: item.equipmentCost || 0,
-                        serviceCost: item.serviceCost || 0,
-                        otherCost: item.otherCost || 0,
-                      });
-                      setEditItemDialog({ open: true, item });
-                    }}>
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                  <Popover open={bdiPopoverItemId === item.id} onOpenChange={(open) => setBdiPopoverItemId(open ? item.id : null)}>
-                    <PopoverTrigger asChild>
-                      <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || item.includeLabor === 0 || item.includeLabor === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
-                        <SlidersHorizontal className="h-3 w-3" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-72 p-3" align="end">
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold text-gray-700">Configuração de BDI</p>
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <Checkbox id={`applyMat2-${item.id}`} checked={Number(item.applyBdiToMaterial) !== 0}
-                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, applyBdiToMaterial: v === true })} />
-                            <Label htmlFor={`applyMat2-${item.id}`} className="text-xs cursor-pointer">Aplicar BDI ao Material</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Checkbox id={`applyLab2-${item.id}`} checked={Number(item.applyBdiToLabor) !== 0}
-                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, applyBdiToLabor: v === true })} />
-                            <Label htmlFor={`applyLab2-${item.id}`} className="text-xs cursor-pointer">Aplicar BDI à Mão de Obra</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Checkbox id={`applyEnc2-${item.id}`} checked={Number(item.aplicarEncargosSociais) !== 0}
-                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, aplicarEncargosSociais: v === true })} />
-                            <Label htmlFor={`applyEnc2-${item.id}`} className="text-xs cursor-pointer">Aplicar Encargos Sociais</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Checkbox id={`inclMat2-${item.id}`} checked={Number(item.includeMaterial) !== 0}
-                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeMaterial: v === true })} />
-                            <Label htmlFor={`inclMat2-${item.id}`} className="text-xs cursor-pointer">Incluir Material no Orçamento</Label>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Checkbox id={`inclLab2-${item.id}`} checked={Number(item.includeLabor) !== 0}
-                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeLabor: v === true })} />
-                            <Label htmlFor={`inclLab2-${item.id}`} className="text-xs cursor-pointer">Incluir Mão de Obra no Orçamento</Label>
-                          </div>
-                        </div>
-                        <div className="space-y-2 pt-1 border-t border-gray-100">
-                          <div>
-                            <Label className="text-xs font-semibold text-blue-700">Ajuste Material (%)</Label>
-                            <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre o Material deste item</p>
-                            <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-blue-300 bg-blue-50 focus-visible:ring-blue-500"
-                              defaultValue={item.materialAdjustment || 0}
-                              onBlur={(e) => updateItem.mutate({ id: item.id, materialAdjustment: parseFloat(e.target.value) || 0 })} />
-                          </div>
-                          <div>
-                            <Label className="text-xs font-semibold text-orange-700">Ajuste M.O. (%)</Label>
-                            <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre a M.O. deste item</p>
-                            <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-orange-300 bg-orange-50 focus-visible:ring-orange-500"
-                              defaultValue={item.laborAdjustment || 0}
-                              onBlur={(e) => updateItem.mutate({ id: item.id, laborAdjustment: parseFloat(e.target.value) || 0 })} />
-                          </div>
-                        </div>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                  {isComposition && (
-                    <Button size="sm" variant="ghost"
-                      className="h-6 w-6 p-0 text-teal-500 hover:text-teal-700"
-                      title="Sincronizar com orçamento principal"
-                      disabled={syncItem.isPending}
-                      onClick={() => syncItem.mutate({ additiveItemId: item.id, budgetId })}>
-                      <RefreshCw className={cn("h-3 w-3", syncItem.isPending && "animate-spin")} />
-                    </Button>
-                  )}
-                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={() => deleteItem.mutate({ id: item.id })}>
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              </td>
-            )}
-          </tr>
-        );
-      }
       // Painel de insumos expandido
       const inputsPanel = isInputsExpanded ? (
         <tr key={`inputs-${item.id}`} className="bg-blue-50/60">
@@ -674,6 +562,130 @@ export function AditivoEditor({
           </td>
         </tr>
       ) : null;
+
+      if (viewMode === "com-bdi") {
+        // Material, M.O. e Total vêm todos do mesmo cálculo agora — ver
+        // calcItemBdiBreakdown (única fonte de verdade).
+        const _bdi = calcItemBdiBreakdown(item, bdiMultiplier, socialCharges);
+        return (
+          <>
+          <tr key={item.id} className={cn("border-b border-gray-100 hover:bg-gray-50/50", isInputsExpanded && "bg-blue-50/30")}>
+            <td className="py-2 px-3 text-xs text-gray-400 w-16">{itemNum}</td>
+            <td className="py-2 px-3 text-xs text-gray-700">{item.description}</td>
+            <td className="py-2 px-3 text-xs text-center text-gray-500">{item.quantity}</td>
+            <td className="py-2 px-3 text-xs text-center text-gray-500">{item.unit}</td>
+            <td className="py-2 px-3 text-xs text-right text-gray-600">
+              {formatCurrency(_bdi.material)}
+            </td>
+            <td className="py-2 px-3 text-xs text-right text-gray-600">
+              {formatCurrency(_bdi.labor)}
+            </td>
+            <td className={cn("py-2 px-3 text-xs text-right font-semibold", _bdi.total < 0 ? "text-red-600" : "text-blue-700")}>
+              {formatCurrency(_bdi.total)}
+            </td>
+            {!isFrozen && (
+              <td className="py-2 px-3 text-xs">
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-gray-400"
+                    title="Editar item"
+                    onClick={() => {
+                      setEditItemForm({
+                        description: item.description || "",
+                        unit: item.unit || "",
+                        quantity: item.quantity || 1,
+                        materialCost: item.materialCost || 0,
+                        laborCost: item.laborCost || 0,
+                        equipmentCost: item.equipmentCost || 0,
+                        serviceCost: item.serviceCost || 0,
+                        otherCost: item.otherCost || 0,
+                      });
+                      setEditItemDialog({ open: true, item });
+                    }}>
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Popover open={bdiPopoverItemId === item.id} onOpenChange={(open) => setBdiPopoverItemId(open ? item.id : null)}>
+                    <PopoverTrigger asChild>
+                      <Button size="sm" variant="ghost" className={cn("h-6 w-6 p-0", (item.applyBdiToMaterial === false || item.applyBdiToMaterial === 0 || item.applyBdiToLabor === false || item.applyBdiToLabor === 0 || item.includeMaterial === 0 || item.includeMaterial === false || item.includeLabor === 0 || item.includeLabor === false || (item.materialAdjustment && item.materialAdjustment !== '0') || (item.laborAdjustment && item.laborAdjustment !== '0')) ? "text-orange-500" : "text-gray-400")}>
+                        <SlidersHorizontal className="h-3 w-3" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-72 p-3" align="end">
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold text-gray-700">Configuração de BDI</p>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Checkbox id={`applyMat2-${item.id}`} checked={Number(item.applyBdiToMaterial) !== 0}
+                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, applyBdiToMaterial: v === true })} />
+                            <Label htmlFor={`applyMat2-${item.id}`} className="text-xs cursor-pointer">Aplicar BDI ao Material</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Checkbox id={`applyLab2-${item.id}`} checked={Number(item.applyBdiToLabor) !== 0}
+                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, applyBdiToLabor: v === true })} />
+                            <Label htmlFor={`applyLab2-${item.id}`} className="text-xs cursor-pointer">Aplicar BDI à Mão de Obra</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Checkbox id={`applyEnc2-${item.id}`} checked={Number(item.aplicarEncargosSociais) !== 0}
+                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, aplicarEncargosSociais: v === true })} />
+                            <Label htmlFor={`applyEnc2-${item.id}`} className="text-xs cursor-pointer">Aplicar Encargos Sociais</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Checkbox id={`inclMat2-${item.id}`} checked={Number(item.includeMaterial) !== 0}
+                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeMaterial: v === true })} />
+                            <Label htmlFor={`inclMat2-${item.id}`} className="text-xs cursor-pointer">Incluir Material no Orçamento</Label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Checkbox id={`inclLab2-${item.id}`} checked={Number(item.includeLabor) !== 0}
+                              onCheckedChange={(v) => updateItem.mutate({ id: item.id, includeLabor: v === true })} />
+                            <Label htmlFor={`inclLab2-${item.id}`} className="text-xs cursor-pointer">Incluir Mão de Obra no Orçamento</Label>
+                          </div>
+                        </div>
+                        <div className="space-y-2 pt-1 border-t border-gray-100">
+                          <div>
+                            <Label className="text-xs font-semibold text-blue-700">Ajuste Material (%)</Label>
+                            <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre o Material deste item</p>
+                            <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-blue-300 bg-blue-50 focus-visible:ring-blue-500"
+                              defaultValue={item.materialAdjustment || 0}
+                              onBlur={(e) => updateItem.mutate({ id: item.id, materialAdjustment: parseFloat(e.target.value) || 0 })} />
+                          </div>
+                          <div>
+                            <Label className="text-xs font-semibold text-orange-700">Ajuste M.O. (%)</Label>
+                            <p className="text-[11px] text-gray-500">Acréscimo (+) ou desconto (-) sobre a M.O. deste item</p>
+                            <Input type="number" step="0.01" className="h-7 text-xs mt-1 border-orange-300 bg-orange-50 focus-visible:ring-orange-500"
+                              defaultValue={item.laborAdjustment || 0}
+                              onBlur={(e) => updateItem.mutate({ id: item.id, laborAdjustment: parseFloat(e.target.value) || 0 })} />
+                          </div>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  {isComposition && (
+                    <Button size="sm" variant="ghost"
+                      className={cn("h-6 w-6 p-0", isInputsExpanded ? "text-blue-600" : "text-gray-400")}
+                      onClick={() => handleToggleInputs(item.id, isComposition)}
+                      title="Editar insumos">
+                      <List className="h-3 w-3" />
+                    </Button>
+                  )}
+                  {isComposition && (
+                    <Button size="sm" variant="ghost"
+                      className="h-6 w-6 p-0 text-teal-500 hover:text-teal-700"
+                      title="Sincronizar com orçamento principal"
+                      disabled={syncItem.isPending}
+                      onClick={() => syncItem.mutate({ additiveItemId: item.id, budgetId })}>
+                      <RefreshCw className={cn("h-3 w-3", syncItem.isPending && "animate-spin")} />
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={() => deleteItem.mutate({ id: item.id })}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </td>
+            )}
+          </tr>
+          {inputsPanel}
+          </>
+        );
+      }
 
       // Visão s/ BDI
       return (
