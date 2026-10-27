@@ -30,6 +30,42 @@ export interface BudgetBdiParams {
 }
 
 /**
+ * Total do item com BDI — fórmula ÚNICA usada pela aba Medições (Saldo
+ * Medido) e pelo gráfico de Avanço Físico, para os dois sempre baterem.
+ * Respeita bdiConfigs por item, includeMaterial do orçamento, overrides de
+ * material, encargos e ajustes manuais.
+ */
+export function calcItemTotalWithBdiShared(
+  item: any,
+  bdiConfigs: Record<number, BdiConfigEntry>,
+  params: BudgetBdiParams
+): number {
+  const { socialCharges, adminCentral, profit, taxes, risk, warranty, includeMaterial } = params;
+  const qty = Number(item.quantity);
+  const rawMaterial = Number(item.materialCost);
+  const labor = Number(item.laborCost);
+  const equipment = Number(item.equipmentCost);
+  const service = Number(item.serviceCost);
+  const other = Number(item.otherCost);
+  const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
+  const material = Number(item.excludeMaterialOverride) === 1
+    ? 0
+    : (includeMaterial || Number(item.includeMaterialOverride) === 1) ? rawMaterial : 0;
+  const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
+  const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
+  const denominator = 1 - profit / 100 - taxes / 100;
+  const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
+  const bdiMult = 1 + baseBDI + (config.additionalIncrement || 0) / 100 - (config.discount || 0) / 100;
+  const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
+  const matWithBdi = config.applyBdiToMaterial ? material * bdiMult : material;
+  const laborWithBdi = config.applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges;
+  const laborBucket = laborWithBdi + equipment * bdiMult + service * bdiMult + other * bdiMult;
+  const matAdjPct = Number(item.materialAdjustment) || 0;
+  const laborAdjPct = Number(item.laborAdjustment) || 0;
+  return (matWithBdi * (1 + matAdjPct / 100) + laborBucket * (1 + laborAdjPct / 100)) * qty;
+}
+
+/**
  * Saldo medido acumulado (soma de TODOS os períodos já medidos, não só até
  * um período selecionado) — usa a fórmula de BDI configurável por item
  * (bdiConfigs), a mesma da aba Medições. Precisa de `stages` no formato
@@ -50,47 +86,8 @@ export function useSaldoMedido(
   const { socialCharges, adminCentral, profit, taxes, risk, warranty, includeMaterial } = params;
 
   return useMemo(() => {
-    // Fórmula canônica (igual server/db.ts, getStages, BudgetForm.tsx) — era
-    // multiplicativa (baseBdi*(1+incr%)*(1-desc%)) em vez de aditiva, o que
-    // divergia do resto do app sempre que um item tinha Incremento Adicional/
-    // Desconto configurado no Comp. BDI.
-    const calcBDIMultiplier = (additionalBdi = 0, discount = 0) => {
-      const numerator = (1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100);
-      const denominator = 1 - profit / 100 - taxes / 100;
-      const baseBDI = denominator > 0 ? (numerator / denominator - 1) : 0;
-      const adjustedBDI = baseBDI + additionalBdi / 100 - discount / 100;
-      return 1 + adjustedBDI;
-    };
-
-    const calcItemTotalWithBdi = (item: any): number => {
-      const qty = Number(item.quantity);
-      const rawMaterial = Number(item.materialCost);
-      const labor = Number(item.laborCost);
-      const equipment = Number(item.equipmentCost);
-      const service = Number(item.serviceCost);
-      const other = Number(item.otherCost);
-      const config = bdiConfigs[item.id] || { applyBdiToMaterial: true, applyBdiToLabor: true, additionalIncrement: 0, discount: 0 };
-      // aplicarEncargosSociais/includeMaterialOverride/excludeMaterialOverride
-      // vivem em budget_items, não na tabela de config de BDI — ler do item
-      // direto, igual ao servidor. excludeMaterialOverride sempre GANHA.
-      const material = Number(item.excludeMaterialOverride) === 1
-        ? 0
-        : (includeMaterial || Number(item.includeMaterialOverride) === 1) ? rawMaterial : 0;
-      const aplicarEncargos = Number(item.aplicarEncargosSociais) !== 0;
-      const bdiMult = calcBDIMultiplier(config.additionalIncrement, config.discount || 0);
-      const laborWithCharges = labor * (1 + (aplicarEncargos ? socialCharges : 0) / 100);
-      const matWithBdi = config.applyBdiToMaterial ? material * bdiMult : material;
-      const laborWithBdi = config.applyBdiToLabor ? laborWithCharges * bdiMult : laborWithCharges;
-      const eqWithBdi = equipment * bdiMult;
-      const svcWithBdi = service * bdiMult;
-      const othWithBdi = other * bdiMult;
-      const laborBucket = laborWithBdi + eqWithBdi + svcWithBdi + othWithBdi;
-      // Ajuste Material (%) / Ajuste M.O. (%) faltavam por completo — o
-      // "Saldo Medido" saía sem os ajustes manuais configurados no item.
-      const matAdjPct = Number(item.materialAdjustment) || 0;
-      const laborAdjPct = Number(item.laborAdjustment) || 0;
-      return (matWithBdi * (1 + matAdjPct / 100) + laborBucket * (1 + laborAdjPct / 100)) * qty;
-    };
+    const calcItemTotalWithBdi = (item: any): number =>
+      calcItemTotalWithBdiShared(item, bdiConfigs, params);
 
     const accumPercentByItem: Record<number, number> = {};
     (allBudgetMeasurementItems as any[]).forEach((mi: any) => {
@@ -153,6 +150,11 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
     { budgetId },
     { enabled: !!budgetId }
   );
+  // Mesmas configurações de BDI por item da aba Medições (para os números baterem)
+  const { data: bdiConfigsRaw = [] } = trpc.budgetItemBdiConfig.getByBudgetId.useQuery(
+    { budgetId },
+    { enabled: !!budgetId }
+  );
 
   return useMemo(() => {
     const datedStages = stages.filter((s: any) => s.startDate && s.endDate);
@@ -175,23 +177,30 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
     // Não replica overrides por item (bdiConfigs) de propósito — mesma
     // simplificação documentada acima, pra ficar leve numa lista com vários
     // orçamentos (Home.tsx) — mas a fórmula base agora bate com a real.
-    const itemTotalWithBdiLocal = (item: any) => {
-      const qty = parseFloat(item.quantity || "0");
-      const material = parseFloat(item.materialCost || "0");
-      const labor = parseFloat(item.laborCost || "0");
-      const equipment = parseFloat(item.equipmentCost || "0");
-      const service = parseFloat(item.serviceCost || "0");
-      const other = parseFloat(item.otherCost || "0");
-      const matAdjPct = parseFloat(item.materialAdjustment || "0") / 100;
-      const laborAdjPct = parseFloat(item.laborAdjustment || "0") / 100;
-      const laborWithEncargos = labor * (1 + encargos);
-      const laborBucket = (laborWithEncargos + equipment + service + other) * (1 + laborAdjPct);
-      const materialBucket = material * (1 + matAdjPct);
-      const numerator = (1 + adminCentral) * (1 + garantia) * (1 + risco);
-      const denominator = 1 - lucro - impostos;
-      const bdiRatio = denominator > 0 ? numerator / denominator : 1;
-      return (materialBucket + laborBucket) * bdiRatio * qty;
+    const bdiConfigsMap: Record<number, BdiConfigEntry> = Object.fromEntries(
+      (bdiConfigsRaw as any[]).map((c: any) => [
+        c.budgetItemId,
+        {
+          applyBdiToMaterial: c.applyBdiToMaterial,
+          applyBdiToLabor: c.applyBdiToLabor,
+          additionalIncrement: Number(c.additionalIncrement || 0),
+          discount: c.discount !== undefined ? Number(c.discount) : undefined,
+          aplicarEncargosSociais: c.aplicarEncargosSociais,
+          includeMaterialOverride: Number(c.includeMaterialOverride) === 1,
+          excludeMaterialOverride: Number(c.excludeMaterialOverride) === 1,
+        },
+      ])
+    );
+    const bdiParams: BudgetBdiParams = {
+      socialCharges: encargos * 100,
+      adminCentral: adminCentral * 100,
+      profit: lucro * 100,
+      taxes: impostos * 100,
+      risk: risco * 100,
+      warranty: garantia * 100,
+      includeMaterial: Number(budget?.includeMaterial ?? 1) !== 0,
     };
+    const itemTotalWithBdiLocal = (item: any) => calcItemTotalWithBdiShared(item, bdiConfigsMap, bdiParams);
 
     const measurableItems: any[] = [];
     datedStages.forEach((stage: any) => {
@@ -292,7 +301,7 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
       deltaPercent,
       deltaValue: (deltaPercent / 100) * totalBudgetDated,
     };
-  }, [stages, budget, measurementPeriodsForChart, allMeasuredItemsForChart]);
+  }, [stages, budget, measurementPeriodsForChart, allMeasuredItemsForChart, bdiConfigsRaw]);
 }
 
 // Aditivos aprovados: total contratado e valor já medido (todos os períodos).
