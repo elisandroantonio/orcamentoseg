@@ -157,8 +157,22 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
   );
 
   return useMemo(() => {
-    const datedStages = stages.filter((s: any) => s.startDate && s.endDate);
-    if (datedStages.length === 0) return null;
+    // Etapa "agendada" = tem datas próprias OU herda as datas da etapa-mãe mais
+    // próxima que tenha (sub-etapa sem data não some do gráfico).
+    const stageById = new Map<number, any>(stages.map((s: any) => [s.id, s]));
+    const effectiveDates = (st: any): { start: Date; end: Date } | null => {
+      let cur: any = st;
+      let guard = 0;
+      while (cur && guard++ < 50) {
+        if (cur.startDate && cur.endDate) return { start: new Date(cur.startDate), end: new Date(cur.endDate) };
+        cur = cur.parentStageId ? stageById.get(cur.parentStageId) : null;
+      }
+      return null;
+    };
+    const scheduled = stages
+      .map((st: any) => ({ stage: st, dates: effectiveDates(st) }))
+      .filter((x: any) => x.dates !== null) as { stage: any; dates: { start: Date; end: Date } }[];
+    if (scheduled.length === 0) return null;
 
     const encargos = parseFloat(budget?.socialCharges || "0") / 100;
     const adminCentral = parseFloat(budget?.adminCentral || "0") / 100;
@@ -202,15 +216,21 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
     };
     const itemTotalWithBdiLocal = (item: any) => calcItemTotalWithBdiShared(item, bdiConfigsMap, bdiParams);
 
+    // IMPORTANTE: usa só os itens PRÓPRIOS de cada etapa (stage.totalWithBdi do
+    // servidor já soma as sub-etapas, então somar pai + filha contava tudo em
+    // dobro e fazia o Realizado ficar muito abaixo do real).
     const measurableItems: any[] = [];
-    datedStages.forEach((stage: any) => {
+    const ownTotalByStage = new Map<number, number>();
+    scheduled.forEach(({ stage }) => {
+      let own = 0;
       (stage.items || []).forEach((item: any) => {
-        if (item.type !== "composite") measurableItems.push(item);
-        if (item.children) item.children.forEach((c: any) => measurableItems.push(c));
+        if (item.type !== "composite") { measurableItems.push(item); own += itemTotalWithBdiLocal(item); }
+        if (item.children) item.children.forEach((c: any) => { measurableItems.push(c); own += itemTotalWithBdiLocal(c); });
       });
+      ownTotalByStage.set(stage.id, own);
     });
 
-    const totalBudgetDated = datedStages.reduce((sum: number, s: any) => sum + parseFloat(s.totalWithBdi || "0"), 0);
+    const totalBudgetDated = Array.from(ownTotalByStage.values()).reduce((a, b) => a + b, 0);
     if (totalBudgetDated <= 0) return null;
 
     const sortedPeriods = [...(measurementPeriodsForChart as any[])].sort((a, b) => a.periodNumber - b.periodNumber);
@@ -242,10 +262,10 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
 
     const plannedValueAt = (d: Date): number => {
       let value = 0;
-      datedStages.forEach((stage: any) => {
-        const start = new Date(stage.startDate);
-        const end = new Date(stage.endDate);
-        const total = parseFloat(stage.totalWithBdi || "0");
+      scheduled.forEach(({ stage, dates }) => {
+        const start = dates.start;
+        const end = dates.end;
+        const total = ownTotalByStage.get(stage.id) || 0;
         let frac: number;
         if (end <= start) {
           frac = d >= start ? 1 : 0;
@@ -257,8 +277,8 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
       return value;
     };
 
-    const minStart = new Date(Math.min(...datedStages.map((s: any) => new Date(s.startDate).getTime())));
-    let maxEnd = new Date(Math.max(...datedStages.map((s: any) => new Date(s.endDate).getTime())));
+    const minStart = new Date(Math.min(...scheduled.map((x) => x.dates.start.getTime())));
+    let maxEnd = new Date(Math.max(...scheduled.map((x) => x.dates.end.getTime())));
     const today = new Date();
     const latestSnapshotDate = measuredSnapshots.length > 0 ? measuredSnapshots[measuredSnapshots.length - 1].date : minStart;
     maxEnd = new Date(Math.max(maxEnd.getTime(), today.getTime(), latestSnapshotDate.getTime()));
