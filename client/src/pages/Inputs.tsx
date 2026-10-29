@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
 import { matchesAllWords } from "@/lib/search";
-import { Plus, Pencil, Trash2, Search, Check, X, DollarSign } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Check, X, DollarSign, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
@@ -196,6 +197,36 @@ export default function Inputs() {
     equipment: "bg-orange-100 text-orange-800",
   };
   
+  // Exportar insumos (lista filtrada da tela) para Excel
+  const exportToExcel = () => {
+    if (!filteredInputs || filteredInputs.length === 0) {
+      toast.error("Nenhum insumo para exportar");
+      return;
+    }
+    const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+    const typeLabel = (t: string) => (t === "material" ? "Material" : t === "labor" ? "Mão de Obra" : t === "equipment" ? "Equipamento" : t || "");
+    const HEADER = ["Código", "Descrição", "Tipo", "Unidade", "Custo Unitário", "Observações"];
+    const data = filteredInputs.map((i: any) => ({
+      "Código": i.code || "",
+      "Descrição": i.description || "",
+      "Tipo": typeLabel(i.type),
+      "Unidade": i.unit || "",
+      "Custo Unitário": round2(i.unitCost),
+      "Observações": i.notes || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data, { header: HEADER });
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    for (let r = range.s.r + 1; r <= range.e.r; r++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c: 4 })];
+      if (cell && typeof cell.v === "number") cell.z = '"R$" #,##0.00';
+    }
+    ws["!cols"] = [{ wch: 14 }, { wch: 60 }, { wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Insumos");
+    XLSX.writeFile(wb, `insumos_${new Date().toISOString().split("T")[0]}.xlsx`);
+    toast.success("Arquivo Excel exportado com sucesso");
+  };
+
   // Estatísticas
   const stats = useMemo(() => {
     if (!inputs) return { total: 0, material: 0, labor: 0, equipment: 0 };
@@ -217,6 +248,11 @@ export default function Inputs() {
               Gerencie materiais, mão de obra e equipamentos - Clique no preço para editar rapidamente
             </p>
           </div>
+          <div className="flex gap-2">
+          <Button onClick={exportToExcel} variant="outline">
+            <Download className="mr-2 h-4 w-4" />
+            Exportar Excel
+          </Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={() => { setEditingId(null); reset(); }}>
@@ -276,6 +312,7 @@ export default function Inputs() {
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
         
         {/* Estatísticas */}

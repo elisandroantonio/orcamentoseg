@@ -166,55 +166,60 @@ export default function Compositions() {
       return;
     }
     
-    const data = [];
-    
+    const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+    const HEADER = [
+      "Código", "Descrição", "Categoria", "Unidade",
+      "Custo Material", "Custo Mão de Obra", "Custo Equipamentos", "Custo Total",
+      "Coeficiente", "Custo Unitário",
+    ];
+    const data: Record<string, string | number>[] = [];
+
     for (const comp of filteredCompositions) {
+      // Cabeçalho da composição: SEMPRE os valores gravados na própria composição
+      // (mantidos em sincronia com os insumos por recalculateCompositionCosts).
+      const materialCost = Number(comp.materialCost || 0);
+      const laborCost = Number(comp.laborCost || 0);
+      const equipmentCost = Number((comp as any).equipmentCost || 0);
+      data.push({
+        "Código": comp.code || "",
+        "Descrição": comp.description,
+        "Categoria": getCategoryName(comp.categoryId),
+        "Unidade": comp.unit,
+        "Custo Material": round2(materialCost),
+        "Custo Mão de Obra": round2(laborCost),
+        "Custo Equipamentos": round2(equipmentCost),
+        "Custo Total": round2(materialCost + laborCost + equipmentCost),
+      });
+
+      // Insumos só para as composições já abertas na tela
       const inputs = compositionInputs[comp.id] || [];
-      
-      if (inputs.length === 0) {
+      for (const inp of inputs) {
+        const coef = Number(inp.coefficient || 0);
+        const unitCost = Number(inp.input?.unitCost || 0);
         data.push({
-          "Código": comp.code || "",
-          "Descrição": comp.description,
-          "Categoria": getCategoryName(comp.categoryId),
-          "Unidade": comp.unit,
-          "Custo Material": "",
-          "Custo Mão de Obra": "",
-          "Custo Equipamentos": "",
-          "Custo Total": "",
+          "Código": `  ${inp.input?.code || ""}`,
+          "Descrição": `  ${inp.input?.description || ""}`,
+          "Categoria": inp.input?.type === "material" ? "Material" : inp.input?.type === "labor" ? "Mão de Obra" : "Equipamento",
+          "Unidade": inp.input?.unit || "",
+          "Coeficiente": Math.round(coef * 1e6) / 1e6,
+          "Custo Unitário": round2(unitCost),
+          "Custo Total": round2(coef * unitCost),
         });
-      } else {
-        const materialCost = inputs.filter(i => i.input?.type === "material").reduce((sum, i) => sum + (Number(i.coefficient || 0) * Number(i.input?.unitCost || 0)), 0);
-        const laborCost = inputs.filter(i => i.input?.type === "labor").reduce((sum, i) => sum + (Number(i.coefficient || 0) * Number(i.input?.unitCost || 0)), 0);
-        const equipmentCost = inputs.filter(i => i.input?.type === "equipment").reduce((sum, i) => sum + (Number(i.coefficient || 0) * Number(i.input?.unitCost || 0)), 0);
-        const totalCost = materialCost + laborCost + equipmentCost;
-        
-        data.push({
-          "Código": comp.code || "",
-          "Descrição": comp.description,
-          "Categoria": getCategoryName(comp.categoryId),
-          "Unidade": comp.unit,
-          "Custo Material": `R$ ${materialCost.toFixed(2)}`,
-          "Custo Mão de Obra": `R$ ${laborCost.toFixed(2)}`,
-          "Custo Equipamentos": `R$ ${equipmentCost.toFixed(2)}`,
-          "Custo Total": `R$ ${totalCost.toFixed(2)}`,
-        });
-        
-        // Adicionar insumos
-        for (const inp of inputs) {
-          data.push({
-            "Código": `  ${inp.input?.code || ""}`,
-            "Descrição": `  ${inp.input?.description || ""}`,
-            "Categoria": inp.input?.type === "material" ? "Material" : inp.input?.type === "labor" ? "Mão de Obra" : "Equipamento",
-            "Unidade": inp.input?.unit || "",
-            "Coeficiente": Number(inp.coefficient || 0).toFixed(6),
-            "Custo Unitário": `R$ ${Number(inp.input?.unitCost || 0).toFixed(2)}`,
-            "Custo Total": `R$ ${(Number(inp.coefficient || 0) * Number(inp.input?.unitCost || 0)).toFixed(2)}`,
-          });
-        }
       }
     }
-    
-    const ws = XLSX.utils.json_to_sheet(data);
+
+    const ws = XLSX.utils.json_to_sheet(data, { header: HEADER });
+    // Formata colunas de custo como moeda (E:H = custos, J = custo unitário) e coeficiente (I)
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    for (let r = range.s.r + 1; r <= range.e.r; r++) {
+      for (const c of [4, 5, 6, 7, 9]) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        if (cell && typeof cell.v === "number") cell.z = '"R$" #,##0.00';
+      }
+      const coefCell = ws[XLSX.utils.encode_cell({ r, c: 8 })];
+      if (coefCell && typeof coefCell.v === "number") coefCell.z = "0.000000";
+    }
+    ws["!cols"] = [{ wch: 14 }, { wch: 60 }, { wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 12 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Composições");
     XLSX.writeFile(wb, `composicoes_${new Date().toISOString().split('T')[0]}.xlsx`);
