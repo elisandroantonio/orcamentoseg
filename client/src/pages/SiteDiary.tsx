@@ -130,6 +130,7 @@ export default function SiteDiary() {
           }
         }}
         entry={editing}
+        previousEntries={entries as any}
         stages={stages as any}
         isPending={createEntry.isPending || updateEntry.isPending}
         onSubmit={handleSubmit}

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import StagePicker from "@/components/StagePicker";
-import { Camera, Image as ImageIcon, Plus, X } from "lucide-react";
+import { Camera, Copy, Image as ImageIcon, Plus, X } from "lucide-react";
 
 export const WEATHER_LABEL: Record<string, string> = {
   bom: "Bom",
@@ -57,6 +57,7 @@ export default function DiaryEntryDialog({
   isPending,
   onSubmit,
   entry,
+  previousEntries,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,6 +66,8 @@ export default function DiaryEntryDialog({
   onSubmit: (payload: DiaryEntryPayload) => void;
   /** Se informado, a janela edita esta entrada em vez de criar uma nova. */
   entry?: any | null;
+  /** Diários já lançados desta obra — permite copiar atividades/equipe de um deles. */
+  previousEntries?: any[];
 }) {
   const [existingPhotos, setExistingPhotos] = useState<{ id: number; url: string }[]>([]);
   const [removedPhotoIds, setRemovedPhotoIds] = useState<number[]>([]);
@@ -130,6 +133,27 @@ export default function DiaryEntryDialog({
     setPhotos(prev => [...prev, ...results]);
   }
 
+  // Copia atividades, etapas, equipe e equipamentos de um diário já lançado.
+  // Não copia data, clima, ocorrências nem fotos (mudam todo dia).
+  function copyFromEntry(src: any) {
+    if (!src) return;
+    setStageIds(src.stages?.length ? src.stages.map((x: any) => x.id) : [null]);
+    setEquipmentUsed(src.equipmentUsed || "");
+    setActivities(src.activities || "");
+    setLabor(
+      src.labor?.length
+        ? src.labor.map((l: any) => ({ role: l.role, count: String(l.count) }))
+        : [{ role: "", count: "" }]
+    );
+    toast.success("Dados copiados — ajuste o que mudou e salve");
+  }
+
+  const copyOptions = (previousEntries || [])
+    .slice()
+    .sort((a: any, b: any) => String(b.entryDate).localeCompare(String(a.entryDate)))
+    .slice(0, 60);
+  const brDate = (d: any) => String(d).slice(0, 10).split("-").reverse().join("/");
+
   function handleSubmit() {
     if (!activities.trim()) {
       toast.error("Descreva as atividades do dia");
@@ -159,6 +183,23 @@ export default function DiaryEntryDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {!entry && copyOptions.length > 0 && (
+            <div className="space-y-1 rounded-md border border-dashed border-blue-300 bg-blue-50/60 p-3">
+              <Label className="flex items-center gap-1 text-blue-700"><Copy className="h-3.5 w-3.5" /> Copiar de um diário anterior</Label>
+              <Select value="" onValueChange={(v) => copyFromEntry(copyOptions.find((e: any) => String(e.id) === v))}>
+                <SelectTrigger><SelectValue placeholder="Escolha o dia a copiar…" /></SelectTrigger>
+                <SelectContent>
+                  {copyOptions.map((e: any) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {brDate(e.entryDate)} — {String(e.activities || "").replace(/\s+/g, " ").slice(0, 40)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-gray-500">Copia atividades, etapas, equipe e equipamentos. Data, clima, ocorrências e fotos ficam em branco.</p>
+            </div>
+          )}
+
           <div className="space-y-1">
             <Label>Data</Label>
             <Input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} />
