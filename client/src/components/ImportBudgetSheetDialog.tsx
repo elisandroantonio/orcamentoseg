@@ -151,8 +151,8 @@ export default function ImportBudgetSheetDialog({ open, onOpenChange }: { open: 
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-      <DialogContent className="max-w-6xl max-h-[92vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[96vw] w-[96vw] h-[94vh] max-h-[94vh] flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2"><FileSpreadsheet className="h-5 w-5" /> Importar orçamento de planilha Excel</DialogTitle>
           <DialogDescription>
             Cria um orçamento NOVO com as etapas e os itens da planilha. Confira abaixo a composição escolhida para cada linha antes de criar.
@@ -177,12 +177,12 @@ export default function ImportBudgetSheetDialog({ open, onOpenChange }: { open: 
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex flex-col gap-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="md:col-span-2 space-y-1">
+            <div className="shrink-0 grid grid-cols-2 md:grid-cols-6 gap-3">
+              <div className="md:col-span-3 space-y-1">
                 <Label>Nome do orçamento</Label>
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} />
               </div>
-              <div className="md:col-span-2 space-y-1">
+              <div className="md:col-span-3 space-y-1">
                 <Label>Cliente (opcional)</Label>
                 <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={clientId} onChange={(e) => setClientId(e.target.value)}>
                   <option value="">— sem cliente —</option>
@@ -201,7 +201,7 @@ export default function ImportBudgetSheetDialog({ open, onOpenChange }: { open: 
             </div>
 
             {summary && (
-              <div className="text-xs rounded-md bg-muted px-3 py-2 flex flex-wrap gap-x-5 gap-y-1">
+              <div className="shrink-0 text-xs rounded-md bg-muted px-3 py-2 flex flex-wrap gap-x-5 gap-y-1">
                 <span><b>{parsed.stages.length}</b> etapas · <b>{parsed.items.length}</b> itens</span>
                 <span className="text-green-700"><b>{summary.comp}</b> com composição da plataforma</span>
                 <span className="text-blue-700"><b>{summary.svc}</b> serviço c/ preço da planilha</span>
@@ -233,7 +233,7 @@ export default function ImportBudgetSheetDialog({ open, onOpenChange }: { open: 
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           {parsed && <Button variant="ghost" onClick={reset} disabled={busy}>Trocar planilha</Button>}
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancelar</Button>
           {parsed && (
