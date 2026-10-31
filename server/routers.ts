@@ -7,6 +7,7 @@ import { TRPCError } from "@trpc/server";
 import { getDb } from "./db";
 import * as db from "./db";
 import { additivesRouter } from "./routers/additives";
+import { budgetImportRouter } from "./routers/budgetImport";
 import { materialListsRouter } from "./routers/materialLists";
 import { cubScRouter } from "./routers/cubSc";
 import { materialMergeRulesRouter } from "./routers/materialMergeRules";
@@ -25,6 +26,7 @@ import { eq, and, sql, isNotNull, isNull, inArray } from "drizzle-orm";
 export const appRouter = router({
   system: systemRouter,
   additives: additivesRouter,
+  budgetImport: budgetImportRouter,
   materialLists: materialListsRouter,
   cubSc: cubScRouter,
   materialMergeRules: materialMergeRulesRouter,

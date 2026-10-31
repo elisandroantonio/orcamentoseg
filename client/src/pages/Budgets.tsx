@@ -4,8 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import { Plus, Eye, Pencil, Trash2, Copy, ChevronRight, ChevronDown, FolderOpen, Lock, BookOpen } from "lucide-react";
+import { Upload, Plus, Eye, Pencil, Trash2, Copy, ChevronRight, ChevronDown, FolderOpen, Lock, BookOpen } from "lucide-react";
 import { Link } from "wouter";
+import ImportBudgetSheetDialog from "@/components/ImportBudgetSheetDialog";
 import { toast } from "sonner";
 import { useState, useMemo } from "react";
 import {
@@ -33,6 +34,7 @@ export default function Budgets() {
   const utils = trpc.useUtils();
   const { data: budgets, isLoading } = trpc.budgets.list.useQuery();
   const { data: clients } = trpc.clients.list.useQuery();
+  const [importOpen, setImportOpen] = useState(false);
   const [expandedClients, setExpandedClients] = useState<Set<number>>(new Set());
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [selectedBudgetForMove, setSelectedBudgetForMove] = useState<number | null>(null);
@@ -146,13 +148,21 @@ export default function Budgets() {
               Gerencie seus orçamentos de obra
             </p>
           </div>
-          <Link href="/budgets/new">
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Novo Orçamento
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="mr-2 h-4 w-4" />
+              Importar planilha
             </Button>
-          </Link>
+            <Link href="/budgets/new">
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Novo Orçamento
+              </Button>
+            </Link>
+          </div>
         </div>
+
+        <ImportBudgetSheetDialog open={importOpen} onOpenChange={setImportOpen} />
 
         <Card>
           <CardHeader>
