@@ -594,6 +594,7 @@ export async function handleExportExcel(
                   isInput: true,
                   coefficient: input.coefficient,
                   unitCost: input.input?.unitCost || 0,
+                  inputType: (input.input?.type || input.type || "").toLowerCase(),
                 });
               });
             }
@@ -630,6 +631,7 @@ export async function handleExportExcel(
                 isInput: true,
                 coefficient: input.coefficient,
                 unitCost: input.input?.unitCost || 0,
+                inputType: (input.input?.type || input.type || "").toLowerCase(),
               });
             });
           }
@@ -654,21 +656,23 @@ export async function handleExportExcel(
       ? ((1 + adminCentral / 100) * (1 + warranty / 100) * (1 + risk / 100) / _bdiDenominator - 1) * 100
       : 0;
 
-    generateBudgetExcel(
+    await generateBudgetExcel(
       companySettings ? {
         companyName: companySettings.companyName,
         cnpj: companySettings.cnpj,
         responsibleName: companySettings.responsibleName,
         responsibleTitle: companySettings.responsibleTitle,
         phone: companySettings.phone,
-        email: companySettings.email
+        email: companySettings.email,
+        logoUrl: companySettings.logoUrl
       } : {
         companyName: "",
         cnpj: "",
         responsibleName: "",
         responsibleTitle: "",
         phone: "",
-        email: ""
+        email: "",
+        logoUrl: null
       },
       {
         name: client?.name || "Cliente não informado",

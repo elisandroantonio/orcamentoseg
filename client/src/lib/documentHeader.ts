@@ -56,7 +56,7 @@ async function fetchPngBytes(url: string): Promise<Uint8Array> {
   return bytes;
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunkSize = 8192;
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -70,7 +70,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 // logo padrão da EG dedicada a documentos, (3) logo padrão geral do app. Cada
 // etapa só entra em ação se a anterior falhar de verdade — o documento nunca
 // sai sem logo nenhuma por causa de um link quebrado.
-async function resolveLogoBytes(logoUrl?: string | null): Promise<Uint8Array | null> {
+export async function resolveLogoBytes(logoUrl?: string | null): Promise<Uint8Array | null> {
   for (const candidate of [logoUrl, "/logo-eg-pdf.png", "/logo-eg.png"]) {
     if (!candidate) continue;
     try {
