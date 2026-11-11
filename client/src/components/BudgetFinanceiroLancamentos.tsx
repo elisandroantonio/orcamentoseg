@@ -24,6 +24,7 @@ export function BudgetFinanceiroLancamentos({ budgetId }: BudgetFinanceiroLancam
     type: '',
     category: '',
   });
+  const [nameFilter, setNameFilter] = useState('');
   
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -38,13 +39,19 @@ export function BudgetFinanceiroLancamentos({ budgetId }: BudgetFinanceiroLancam
   const utils = trpc.useUtils();
 
   // Queries
-  const { data: transactions = [], refetch: refetchTransactions, isLoading } = trpc.transactions.list.useQuery({
+  const { data: allTransactions = [], refetch: refetchTransactions, isLoading } = trpc.transactions.list.useQuery({
     budgetId,
     startDate: filters.startDate || undefined,
     endDate: filters.endDate || undefined,
     type: (filters.type as any) || undefined,
     category: filters.category || undefined,
   });
+
+  // Filtro por nome: procura no nome de quem foi pago/recebido (entre parênteses na descrição) e na descrição
+  const normalize = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const transactions = nameFilter.trim()
+    ? (allTransactions as any[]).filter((t: any) => normalize(String(t.description || '')).includes(normalize(nameFilter.trim())))
+    : (allTransactions as any[]);
 
   const { data: summary = { totalEntradas: 0, totalSaidas: 0, saldoLiquido: 0 } } = trpc.transactions.getSummary.useQuery({
     budgetId,
@@ -357,7 +364,7 @@ export function BudgetFinanceiroLancamentos({ budgetId }: BudgetFinanceiroLancam
           <CardTitle className="text-sm">Filtros</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
             <div>
               <label className="text-xs font-medium">Data Inicial</label>
               <Input
@@ -387,6 +394,15 @@ export function BudgetFinanceiroLancamentos({ budgetId }: BudgetFinanceiroLancam
                   <SelectItem value="saida">🔴 Saídas</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Nome</label>
+              <Input
+                placeholder="Buscar por nome..."
+                value={nameFilter}
+                onChange={(e) => setNameFilter(e.target.value)}
+              />
             </div>
 
             <div>
