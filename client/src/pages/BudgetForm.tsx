@@ -2723,7 +2723,7 @@ export default function BudgetForm() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          <DropdownMenuItem onClick={() => {
+                          <DropdownMenuItem onClick={async () => {
                             const itemsWithoutBDI = allItems.map(item => {
                               const material = Number(item.materialCost) || 0;
                               const labor = Number(item.laborCost) || 0;
@@ -2743,12 +2743,13 @@ export default function BudgetForm() {
                                 otherCost: "0",
                               };
                             });
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportPDF(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithoutBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               false,
                               true,
@@ -2780,12 +2781,13 @@ export default function BudgetForm() {
                             
                             await loadInputsForAnalytico(itemsWithoutBDI, false);
                             
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportPDF(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithoutBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               false,
                               true,
@@ -2805,7 +2807,7 @@ export default function BudgetForm() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          <DropdownMenuItem onClick={() => {
+                          <DropdownMenuItem onClick={async () => {
                             const itemsWithoutBDI = allItems.map(item => {
                               const material = Number(item.materialCost) || 0;
                               const labor = Number(item.laborCost) || 0;
@@ -2825,12 +2827,13 @@ export default function BudgetForm() {
                                 otherCost: "0",
                               };
                             });
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportExcel(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithoutBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               false,
                               true,
@@ -2862,12 +2865,13 @@ export default function BudgetForm() {
                             
                             await loadInputsForAnalytico(itemsWithoutBDI, false);
                             
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportExcel(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithoutBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               false,
                               true,
@@ -3518,14 +3522,15 @@ export default function BudgetForm() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          <DropdownMenuItem onClick={() => {
+                          <DropdownMenuItem onClick={async () => {
                             const itemsWithBDI = buildItemsWithBDIForExport();
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportPDF(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               true,
                               includeMaterial,
@@ -3537,12 +3542,13 @@ export default function BudgetForm() {
                           <DropdownMenuItem onClick={async () => {
                             const itemsWithBDI = buildItemsWithBDIForExport();
                             await loadInputsForAnalytico(itemsWithBDI, true);
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportPDF(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               true,
                               includeMaterial,
@@ -3562,14 +3568,15 @@ export default function BudgetForm() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          <DropdownMenuItem onClick={() => {
+                          <DropdownMenuItem onClick={async () => {
                             const itemsWithBDI = buildItemsWithBDIForExport();
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportExcel(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               true,
                               includeMaterial,
@@ -3581,12 +3588,13 @@ export default function BudgetForm() {
                           <DropdownMenuItem onClick={async () => {
                             const itemsWithBDI = buildItemsWithBDIForExport();
                             await loadInputsForAnalytico(itemsWithBDI, true);
+                            const exportBudget = budget ?? (budgetId ? await utils.budgets.get.fetch({ id: budgetId }) : undefined);
                             handleExportExcel(
-                              budget,
+                              exportBudget,
                               stages || [],
                               itemsWithBDI,
-                              clients?.find(c => c.id === budget?.clientId),
-                              projects?.find(p => p.id === budget?.projectId),
+                              clients?.find(c => c.id === exportBudget?.clientId),
+                              projects?.find(p => p.id === exportBudget?.projectId),
                               companySettings,
                               true,
                               includeMaterial,
