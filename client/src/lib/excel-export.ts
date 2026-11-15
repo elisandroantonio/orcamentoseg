@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { bytesToBase64, resolveLogoBytes } from "./documentHeader";
+import { bytesToBase64, resolveLogoBytes, COMPANY_ADDRESS } from "./documentHeader";
 
 // Exportação do orçamento para Excel com a mesma identidade visual do PDF
 // (client/src/lib/pdf-export.ts): faixa azul-marinho no topo, bloco de título
@@ -228,7 +228,7 @@ export async function generateBudgetExcel(
   const right: [string, string][] = [
     ["EMPRESA:", companyInfo.companyName || "N/A"],
     ["CNPJ:", companyInfo.cnpj || "N/A"],
-    ...(clientInfo.address ? ([["LOCALIDADE:", clientInfo.address]] as [string, string][]) : []),
+    ["LOCALIDADE:", COMPANY_ADDRESS],
     ["RESPONSÁVEL:", `${companyInfo.responsibleTitle || ""} ${companyInfo.responsibleName || ""}`.trim() || "N/A"],
     ["TELEFONE:", companyInfo.phone || "N/A"],
     ["EMAIL:", companyInfo.email || "N/A"],

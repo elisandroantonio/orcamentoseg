@@ -7,6 +7,9 @@
 import type { jsPDF } from "jspdf";
 import type ExcelJS from "exceljs";
 
+// Endereço da EG usado nos cabeçalhos de todos os PDFs/Excel exportados
+export const COMPANY_ADDRESS = "Avenida La Salle, 1069, Sala 02 - Bairro La Salle - Xanxerê/SC";
+
 export const PETROL_DARK: [number, number, number] = [8, 15, 38];
 export const PETROL_LIGHT: [number, number, number] = [26, 42, 82];
 export const PANEL_TINT: [number, number, number] = [233, 236, 243];
@@ -176,6 +179,7 @@ export async function drawPdfCorporateHeader(doc: jsPDF, opts: CorporateHeaderOp
   const col2Fields: HeaderField[] = [
     { label: "EMPRESA:", value: companyInfo.companyName || "N/A" },
     { label: "CNPJ:", value: companyInfo.cnpj || "N/A" },
+    { label: "LOCALIDADE:", value: COMPANY_ADDRESS },
     { label: "RESPONSÁVEL:", value: `${companyInfo.responsibleTitle || ""} ${companyInfo.responsibleName || ""}`.trim() || "N/A" },
     { label: "TELEFONE:", value: companyInfo.phone || "N/A" },
     { label: "EMAIL:", value: companyInfo.email || "N/A", isLink: true },
@@ -276,6 +280,7 @@ export async function addExcelCorporateHeader(
   const companyLine = [
     `Empresa: ${companyInfo.companyName || "N/A"}`,
     companyInfo.cnpj ? `CNPJ: ${companyInfo.cnpj}` : null,
+    `Endereço: ${COMPANY_ADDRESS}`,
     `Responsável: ${`${companyInfo.responsibleTitle || ""} ${companyInfo.responsibleName || ""}`.trim() || "N/A"}`,
     companyInfo.phone ? `Tel: ${companyInfo.phone}` : null,
     companyInfo.email ? `Email: ${companyInfo.email}` : null,

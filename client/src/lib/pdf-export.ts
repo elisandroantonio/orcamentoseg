@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { COMPANY_ADDRESS } from "./documentHeader";
 
 interface CompanyInfo {
   companyName: string;
@@ -230,9 +231,7 @@ export async function generateBudgetPDF(
   const col2Fields: HeaderField[] = [
     { label: "EMPRESA:", value: companyInfo.companyName },
     { label: "CNPJ:", value: companyInfo.cnpj },
-    // Cidade/UF não tem campo próprio no cadastro ainda — mostra o
-    // endereço do cliente em vez de um valor fixo incorreto.
-    ...(clientInfo.address ? [{ label: "LOCALIDADE:", value: clientInfo.address }] : []),
+    { label: "LOCALIDADE:", value: COMPANY_ADDRESS },
     { label: "RESPONSÁVEL:", value: `${companyInfo.responsibleTitle} ${companyInfo.responsibleName}` },
     { label: "TELEFONE:", value: companyInfo.phone },
     { label: "EMAIL:", value: companyInfo.email, isLink: true },
