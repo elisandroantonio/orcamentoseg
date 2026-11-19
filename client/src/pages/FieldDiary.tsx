@@ -62,6 +62,11 @@ export default function FieldDiary() {
     { retry: false, enabled: selectedId != null }
   );
 
+  const { data: workers } = trpc.fieldDiary.listWorkers.useQuery(
+    { budgetId: selectedId! },
+    { retry: false, enabled: selectedId != null }
+  );
+
   useEffect(() => {
     if (meError) setLocation("/campo/login");
   }, [meError, setLocation]);
@@ -202,6 +207,7 @@ export default function FieldDiary() {
         entry={editing}
         previousEntries={entries as any}
         stages={stages as any}
+        workers={workers as any}
         isPending={createEntry.isPending || updateEntry.isPending}
         onSubmit={handleSubmit}
       />

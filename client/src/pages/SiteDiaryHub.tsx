@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { BookOpen, ChevronRight, MapPin } from "lucide-react";
+import { BookOpen, CalendarDays, ChevronRight, MapPin, Users } from "lucide-react";
+import { WorkedDaysReportDialog, WorkersManagerDialog } from "@/components/DiaryWorkers";
 
 function formatDate(value: any) {
   if (!value) return null;
@@ -14,16 +17,30 @@ function formatDate(value: any) {
 /** Hub do dono: todas as obras em execução, cada uma abre o seu Diário. */
 export default function SiteDiaryHub() {
   const { data: budgets, isLoading } = trpc.siteDiary.listExecutingBudgets.useQuery();
+  const [reportOpen, setReportOpen] = useState(false);
+  const [workersOpen, setWorkersOpen] = useState(false);
 
   return (
     <DashboardLayout>
       <div className="max-w-3xl mx-auto space-y-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <BookOpen className="h-6 w-6" /> Diários de Obras
-          </h1>
-          <p className="text-sm text-muted-foreground">Obras em execução — escolha a obra para abrir ou lançar no diário.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <BookOpen className="h-6 w-6" /> Diários de Obras
+            </h1>
+            <p className="text-sm text-muted-foreground">Obras em execução — escolha a obra para abrir ou lançar no diário.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setReportOpen(true)}>
+              <CalendarDays className="h-4 w-4 mr-1" /> Dias trabalhados
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setWorkersOpen(true)}>
+              <Users className="h-4 w-4 mr-1" /> Funcionários
+            </Button>
+          </div>
         </div>
+        <WorkedDaysReportDialog open={reportOpen} onOpenChange={setReportOpen} />
+        <WorkersManagerDialog open={workersOpen} onOpenChange={setWorkersOpen} />
 
         {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
 

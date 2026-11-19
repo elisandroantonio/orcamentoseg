@@ -10,7 +10,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { ArrowLeft, KeyRound, Plus } from "lucide-react";
+import { WorkedDaysReportDialog, WorkersManagerDialog } from "@/components/DiaryWorkers";
+import { ArrowLeft, CalendarDays, KeyRound, Plus, Users } from "lucide-react";
 
 /**
  * Diário de Obras de um ORÇAMENTO em execução (/budgets/:id/diario).
@@ -26,9 +27,13 @@ export default function SiteDiary() {
   const inExecution = !!diaryStatus?.inExecution;
   const { data: entries, isLoading } = trpc.siteDiary.list.useQuery({ budgetId }, { enabled: inExecution });
   const { data: stages } = trpc.siteDiary.listStages.useQuery({ budgetId }, { enabled: inExecution });
+  const { data: workers } = trpc.siteDiary.listWorkers.useQuery();
+  const createWorker = trpc.siteDiary.createWorker.useMutation();
 
   const [formOpen, setFormOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [workersOpen, setWorkersOpen] = useState(false);
 
   const createEntry = trpc.siteDiary.create.useMutation({
     onSuccess: () => {
@@ -81,9 +86,17 @@ export default function SiteDiary() {
               <p className="text-sm text-muted-foreground truncate">{diaryStatus?.title}</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setAccessOpen(true)}>
-            <KeyRound className="h-4 w-4 mr-1" /> Acessos
-          </Button>
+          <div className="flex gap-2 flex-wrap justify-end">
+            <Button variant="outline" size="sm" onClick={() => setReportOpen(true)}>
+              <CalendarDays className="h-4 w-4 mr-1" /> Dias trabalhados
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setWorkersOpen(true)}>
+              <Users className="h-4 w-4 mr-1" /> Funcionários
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setAccessOpen(true)}>
+              <KeyRound className="h-4 w-4 mr-1" /> Acessos
+            </Button>
+          </div>
         </div>
 
         {!statusLoading && !inExecution && (
@@ -132,9 +145,18 @@ export default function SiteDiary() {
         entry={editing}
         previousEntries={entries as any}
         stages={stages as any}
+        workers={workers as any}
+        onCreateWorker={async ({ name, role }) => {
+          const created = await createWorker.mutateAsync({ name, role: role || null });
+          await utils.siteDiary.listWorkers.invalidate();
+          return created;
+        }}
         isPending={createEntry.isPending || updateEntry.isPending}
         onSubmit={handleSubmit}
       />
+
+      <WorkedDaysReportDialog open={reportOpen} onOpenChange={setReportOpen} fixedBudgetId={budgetId} fixedBudgetTitle={diaryStatus?.title ?? undefined} />
+      <WorkersManagerDialog open={workersOpen} onOpenChange={setWorkersOpen} />
 
       <Dialog open={accessOpen} onOpenChange={setAccessOpen}>
         <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden">

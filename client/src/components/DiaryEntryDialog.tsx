@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import StagePicker from "@/components/StagePicker";
-import { Camera, Copy, Image as ImageIcon, Plus, X } from "lucide-react";
+import { Camera, Copy, Image as ImageIcon, Plus, UserPlus, X } from "lucide-react";
 
 export const WEATHER_LABEL: Record<string, string> = {
   bom: "Bom",
@@ -25,6 +25,8 @@ export type DiaryEntryPayload = {
   activities: string;
   occurrences: string | null;
   labor: { role: string; count: number }[];
+  /** Funcionários presentes: 1 = dia inteiro, 0.5 = meio dia. */
+  workerDays: { workerId: number; fraction: number }[];
   photos: string[];
   /** Só na edição: ids das fotos já salvas que o usuário removeu. */
   removePhotoIds?: number[];
@@ -58,6 +60,8 @@ export default function DiaryEntryDialog({
   onSubmit,
   entry,
   previousEntries,
+  workers,
+  onCreateWorker,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -68,6 +72,10 @@ export default function DiaryEntryDialog({
   entry?: any | null;
   /** Diários já lançados desta obra — permite copiar atividades/equipe de um deles. */
   previousEntries?: any[];
+  /** Funcionários cadastrados (cadastro único da empresa). */
+  workers?: { id: number; name: string; role?: string | null; active?: number | boolean }[];
+  /** Se informado, mostra "Cadastrar funcionário" dentro da janela (só equipe interna). */
+  onCreateWorker?: (data: { name: string; role: string }) => Promise<{ id: number } | void>;
 }) {
   const [existingPhotos, setExistingPhotos] = useState<{ id: number; url: string }[]>([]);
   const [removedPhotoIds, setRemovedPhotoIds] = useState<number[]>([]);
@@ -80,6 +88,11 @@ export default function DiaryEntryDialog({
   const [occurrences, setOccurrences] = useState("");
   const [labor, setLabor] = useState<LaborRow[]>([{ role: "", count: "" }]);
   const [photos, setPhotos] = useState<{ dataUrl: string; previewUrl: string }[]>([]);
+  // workerId -> 1 (dia inteiro) | 0.5 (meio dia)
+  const [workerDays, setWorkerDays] = useState<Record<number, number>>({});
+  const [newWorkerOpen, setNewWorkerOpen] = useState(false);
+  const [newWorkerName, setNewWorkerName] = useState("");
+  const [newWorkerRole, setNewWorkerRole] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -98,6 +111,7 @@ export default function DiaryEntryDialog({
           ? entry.labor.map((l: any) => ({ role: l.role, count: String(l.count) }))
           : [{ role: "", count: "" }]
       );
+      setWorkerDays(Object.fromEntries((entry.workerDays || []).map((w: any) => [w.workerId, Number(w.fraction)])));
       setPhotos([]);
       setExistingPhotos((entry.photos || []).map((p: any) => ({ id: p.id, url: p.url })));
       setRemovedPhotoIds([]);
@@ -117,6 +131,10 @@ export default function DiaryEntryDialog({
       setActivities("");
       setOccurrences("");
       setLabor([{ role: "", count: "" }]);
+      setWorkerDays({});
+      setNewWorkerOpen(false);
+      setNewWorkerName("");
+      setNewWorkerRole("");
       setPhotos([]);
     }
   }, [open]);
@@ -145,6 +163,7 @@ export default function DiaryEntryDialog({
         ? src.labor.map((l: any) => ({ role: l.role, count: String(l.count) }))
         : [{ role: "", count: "" }]
     );
+    setWorkerDays(Object.fromEntries((src.workerDays || []).map((w: any) => [w.workerId, Number(w.fraction)])));
     toast.success("Dados copiados — ajuste o que mudou e salve");
   }
 
@@ -153,6 +172,25 @@ export default function DiaryEntryDialog({
     .sort((a: any, b: any) => String(b.entryDate).localeCompare(String(a.entryDate)))
     .slice(0, 60);
   const brDate = (d: any) => String(d).slice(0, 10).split("-").reverse().join("/");
+
+  // Ativos + os já marcados nesta entrada (mesmo que tenham sido desativados depois).
+  const visibleWorkers = (workers || []).filter(w => w.active === undefined || !!Number(w.active) || workerDays[w.id] != null);
+
+  async function handleCreateWorker() {
+    if (!onCreateWorker || !newWorkerName.trim()) {
+      toast.error("Digite o nome do funcionário");
+      return;
+    }
+    try {
+      const created = await onCreateWorker({ name: newWorkerName.trim(), role: newWorkerRole.trim() });
+      if (created && created.id) setWorkerDays(prev => ({ ...prev, [created.id]: 1 }));
+      setNewWorkerName("");
+      setNewWorkerRole("");
+      setNewWorkerOpen(false);
+    } catch (e: any) {
+      toast.error(e?.message || "Erro ao cadastrar funcionário");
+    }
+  }
 
   function handleSubmit() {
     if (!activities.trim()) {
@@ -170,6 +208,7 @@ export default function DiaryEntryDialog({
       labor: labor
         .filter(l => l.role.trim() && Number(l.count) > 0)
         .map(l => ({ role: l.role.trim(), count: Number(l.count) })),
+      workerDays: Object.entries(workerDays).map(([id, fraction]) => ({ workerId: Number(id), fraction })),
       photos: photos.map(p => p.dataUrl),
       ...(entry ? { removePhotoIds: removedPhotoIds } : {}),
     });
@@ -257,6 +296,60 @@ export default function DiaryEntryDialog({
               <Button variant="outline" size="sm" onClick={() => setLabor(prev => [...prev, { role: "", count: "" }])}>
                 <Plus className="h-4 w-4 mr-1" /> Adicionar função
               </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label>Funcionários na obra (dias trabalhados)</Label>
+            <div className="space-y-1.5 rounded-md border p-2">
+              {visibleWorkers.length === 0 && (
+                <p className="text-xs text-muted-foreground px-1">
+                  {onCreateWorker ? "Nenhum funcionário cadastrado ainda. Cadastre abaixo." : "Nenhum funcionário cadastrado."}
+                </p>
+              )}
+              {visibleWorkers.map(w => {
+                const checked = workerDays[w.id] != null;
+                return (
+                  <div key={w.id} className="flex items-center gap-2">
+                    <label className="flex flex-1 min-w-0 items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={checked}
+                        onChange={e => setWorkerDays(prev => {
+                          const next = { ...prev };
+                          if (e.target.checked) next[w.id] = 1; else delete next[w.id];
+                          return next;
+                        })}
+                      />
+                      <span className="truncate">{w.name}{w.role ? <span className="text-xs text-muted-foreground"> · {w.role}</span> : null}</span>
+                    </label>
+                    {checked && (
+                      <select
+                        className="h-8 rounded-md border bg-background px-2 text-sm"
+                        value={String(workerDays[w.id])}
+                        onChange={e => setWorkerDays(prev => ({ ...prev, [w.id]: Number(e.target.value) }))}
+                      >
+                        <option value="1">Dia inteiro</option>
+                        <option value="0.5">Meio dia</option>
+                      </select>
+                    )}
+                  </div>
+                );
+              })}
+              {onCreateWorker && (
+                newWorkerOpen ? (
+                  <div className="flex gap-2 pt-1">
+                    <Input placeholder="Nome" value={newWorkerName} onChange={e => setNewWorkerName(e.target.value)} />
+                    <Input placeholder="Função" className="w-32" value={newWorkerRole} onChange={e => setNewWorkerRole(e.target.value)} />
+                    <Button type="button" size="sm" onClick={handleCreateWorker}>Salvar</Button>
+                  </div>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setNewWorkerOpen(true)}>
+                    <UserPlus className="h-4 w-4 mr-1" /> Cadastrar funcionário
+                  </Button>
+                )
+              )}
             </div>
           </div>
 

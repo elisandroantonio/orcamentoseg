@@ -224,6 +224,27 @@ async function runSafeMigrations() {
       SELECT id, budgetStageId FROM site_diary_entries WHERE budgetStageId IS NOT NULL`);
     console.log('[Migration] site_diary_entry_stages table ensured');
 
+    // Funcionários (cadastro único da empresa) e dias trabalhados por entrada do diário
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_workers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      userId INT NOT NULL,
+      name VARCHAR(150) NOT NULL,
+      role VARCHAR(100),
+      dailyRate DECIMAL(10,2) NULL,
+      active TINYINT NOT NULL DEFAULT 1,
+      createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+      INDEX site_workers_userId_idx (userId)
+    )`);
+    await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_worker_days (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      diaryEntryId INT NOT NULL,
+      workerId INT NOT NULL,
+      dayFraction DECIMAL(3,1) NOT NULL DEFAULT 1.0,
+      UNIQUE KEY site_diary_worker_days_unique (diaryEntryId, workerId),
+      INDEX site_diary_worker_days_worker_idx (workerId)
+    )`);
+    console.log('[Migration] site_workers / site_diary_worker_days tables ensured');
+
     // Diário de Obras — login de campo por obra (ver server/_core/fieldAuth.ts)
     await rawQuery(`CREATE TABLE IF NOT EXISTS site_diary_field_users (
       id INT AUTO_INCREMENT PRIMARY KEY,

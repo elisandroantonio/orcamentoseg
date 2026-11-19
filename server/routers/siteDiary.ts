@@ -11,6 +11,11 @@ const laborEntrySchema = z.object({
   count: z.number().int().min(0).max(999),
 });
 
+const workerDaySchema = z.object({
+  workerId: z.number().int(),
+  fraction: z.number().refine((v) => v === 0.5 || v === 1, "Use 0,5 (meio dia) ou 1 (dia inteiro)"),
+});
+
 const createEntrySchema = z.object({
   budgetId: z.number().int(),
   entryDate: z.string(), // "YYYY-MM-DD"
@@ -21,6 +26,7 @@ const createEntrySchema = z.object({
   activities: z.string().trim().min(1).max(5000),
   occurrences: z.string().trim().max(5000).nullable().optional(),
   labor: z.array(laborEntrySchema).max(30).default([]),
+  workerDays: z.array(workerDaySchema).max(80).default([]),
   photos: z.array(z.string()).max(20).default([]), // data URLs
 });
 
@@ -93,6 +99,14 @@ async function loadEntriesWithDetails(entryIds: number[]) {
     `SELECT * FROM site_diary_labor_entries WHERE diaryEntryId IN (${entryIds.map(() => "?").join(",")})`,
     entryIds
   );
+  const workerDayRows = await rawQuery(
+    `SELECT d.diaryEntryId, d.workerId, d.dayFraction, w.name as workerName, w.role as workerRole
+     FROM site_diary_worker_days d
+     JOIN site_workers w ON w.id = d.workerId
+     WHERE d.diaryEntryId IN (${entryIds.map(() => "?").join(",")})
+     ORDER BY w.name ASC`,
+    entryIds
+  );
   const stageRows = await rawQuery(
     `SELECT ses.diaryEntryId, bs.id, bs.name
      FROM site_diary_entry_stages ses
@@ -116,6 +130,14 @@ async function loadEntriesWithDetails(entryIds: number[]) {
     // Compatibilidade (cards/PDF antigos): nomes juntos por vírgula.
     stageName: stages.length ? stages.map((x: any) => x.name).join(", ") : null,
     labor: labor.filter((l: any) => l.diaryEntryId === entry.id),
+    workerDays: workerDayRows
+      .filter((r: any) => r.diaryEntryId === entry.id)
+      .map((r: any) => ({
+        workerId: r.workerId,
+        workerName: r.workerName,
+        workerRole: r.workerRole,
+        fraction: Number(r.dayFraction),
+      })),
     photos: photos
       .filter((p: any) => p.diaryEntryId === entry.id)
       .map((p: any) => ({ ...p, url: `/api/site-diary/photos/${p.fileName}` })),
@@ -141,6 +163,32 @@ async function saveEntryStages(entryId: number, budgetId: number, stageIds: numb
   }
   // Coluna antiga mantida com a primeira etapa (compatibilidade).
   await rawQuery(`UPDATE site_diary_entries SET budgetStageId = ? WHERE id = ?`, [ids[0] ?? null, entryId]);
+}
+
+/** Grava os funcionários presentes na entrada (dia inteiro = 1, meio dia = 0,5). Só aceita funcionários do dono da obra. */
+async function saveWorkerDays(entryId: number, budgetId: number, workerDays: { workerId: number; fraction: number }[]) {
+  const byWorker = new Map<number, number>();
+  for (const w of workerDays) byWorker.set(w.workerId, w.fraction);
+  const ids = Array.from(byWorker.keys());
+  if (ids.length) {
+    const rows = await rawQuery(
+      `SELECT w.id FROM site_workers w
+       JOIN budgets b ON b.userId = w.userId
+       WHERE b.id = ? AND w.id IN (${ids.map(() => "?").join(",")})`,
+      [budgetId, ...ids]
+    );
+    if (rows.length !== ids.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Funcionário inválido para esta obra" });
+    }
+  }
+  await rawQuery(`DELETE FROM site_diary_worker_days WHERE diaryEntryId = ?`, [entryId]);
+  for (const [workerId, fraction] of Array.from(byWorker.entries())) {
+    await rawQuery(`INSERT INTO site_diary_worker_days (diaryEntryId, workerId, dayFraction) VALUES (?, ?, ?)`, [
+      entryId,
+      workerId,
+      fraction,
+    ]);
+  }
 }
 
 async function listEntryIdsForBudget(budgetId: number): Promise<number[]> {
@@ -213,6 +261,8 @@ async function createEntryCore(
     ]);
   }
 
+  await saveWorkerDays(entryId, input.budgetId, input.workerDays);
+
   for (const photoDataUrl of input.photos) {
     try {
       const fileName = await saveDiaryPhoto(photoDataUrl);
@@ -264,6 +314,8 @@ async function updateEntryCore(budgetId: number, input: z.infer<typeof updateEnt
     ]);
   }
 
+  await saveWorkerDays(input.entryId, budgetId, input.workerDays);
+
   // Só remove fotos que realmente são desta entrada.
   for (const photoId of input.removePhotoIds) {
     const rows = await rawQuery(`SELECT fileName FROM site_diary_photos WHERE id = ? AND diaryEntryId = ? LIMIT 1`, [
@@ -290,6 +342,94 @@ async function updateEntryCore(budgetId: number, input: z.infer<typeof updateEnt
 }
 
 export const siteDiaryRouter = router({
+  // ---- Funcionários (cadastro único da empresa) ----
+  listWorkers: protectedProcedure.query(async ({ ctx }) => {
+    return rawQuery(
+      `SELECT id, name, role, dailyRate, active FROM site_workers WHERE userId = ? ORDER BY active DESC, name ASC`,
+      [ctx.user.id]
+    );
+  }),
+
+  createWorker: protectedProcedure
+    .input(z.object({
+      name: z.string().trim().min(1).max(150),
+      role: z.string().trim().max(100).nullable().optional(),
+      dailyRate: z.number().min(0).max(100000).nullable().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const result: any = await rawQuery(
+        `INSERT INTO site_workers (userId, name, role, dailyRate) VALUES (?, ?, ?, ?)`,
+        [ctx.user.id, input.name, input.role || null, input.dailyRate ?? null]
+      );
+      return { id: result.insertId as number, name: input.name, role: input.role || null, dailyRate: input.dailyRate ?? null, active: 1 };
+    }),
+
+  updateWorker: protectedProcedure
+    .input(z.object({
+      id: z.number().int(),
+      name: z.string().trim().min(1).max(150),
+      role: z.string().trim().max(100).nullable().optional(),
+      dailyRate: z.number().min(0).max(100000).nullable().optional(),
+      active: z.boolean(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const rows = await rawQuery(`SELECT id FROM site_workers WHERE id = ? AND userId = ? LIMIT 1`, [input.id, ctx.user.id]);
+      if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Funcionário não encontrado" });
+      await rawQuery(
+        `UPDATE site_workers SET name = ?, role = ?, dailyRate = ?, active = ? WHERE id = ?`,
+        [input.name, input.role || null, input.dailyRate ?? null, input.active ? 1 : 0, input.id]
+      );
+      return { success: true };
+    }),
+
+  // Relatório de dias trabalhados. Se o mesmo funcionário aparece em mais de uma
+  // entrada no mesmo dia e na mesma obra, conta uma vez só (vale o maior valor).
+  workedDaysReport: protectedProcedure
+    .input(z.object({
+      budgetId: z.number().int().nullable().optional(),
+      workerId: z.number().int().nullable().optional(),
+      dateFrom: z.string().nullable().optional(),
+      dateTo: z.string().nullable().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      const where: string[] = ["b.userId = ?"];
+      const params: any[] = [ctx.user.id];
+      if (input.budgetId) { where.push("b.id = ?"); params.push(input.budgetId); }
+      if (input.workerId) { where.push("w.id = ?"); params.push(input.workerId); }
+      if (input.dateFrom) { where.push("e.entryDate >= ?"); params.push(input.dateFrom); }
+      if (input.dateTo) { where.push("e.entryDate <= ?"); params.push(input.dateTo); }
+      const rows = await rawQuery(
+        `SELECT DATE_FORMAT(e.entryDate, '%Y-%m-%d') as entryDate, b.id as budgetId, b.title as budgetTitle,
+                w.id as workerId, w.name as workerName, w.role as workerRole, w.dailyRate, d.dayFraction
+         FROM site_diary_worker_days d
+         JOIN site_diary_entries e ON e.id = d.diaryEntryId
+         JOIN budgets b ON b.id = e.budgetId
+         JOIN site_workers w ON w.id = d.workerId
+         WHERE ${where.join(" AND ")}
+         ORDER BY w.name ASC, e.entryDate ASC`,
+        params
+      );
+      const merged = new Map<string, any>();
+      for (const r of rows as any[]) {
+        const key = `${r.workerId}|${r.budgetId}|${r.entryDate}`;
+        const fraction = Number(r.dayFraction);
+        const prev = merged.get(key);
+        if (!prev || fraction > prev.fraction) {
+          merged.set(key, {
+            entryDate: r.entryDate,
+            budgetId: r.budgetId,
+            budgetTitle: r.budgetTitle,
+            workerId: r.workerId,
+            workerName: r.workerName,
+            workerRole: r.workerRole,
+            dailyRate: r.dailyRate == null ? null : Number(r.dailyRate),
+            fraction,
+          });
+        }
+      }
+      return Array.from(merged.values());
+    }),
+
   update: protectedProcedure
     .input(updateEntrySchema)
     .mutation(async ({ ctx, input }) => {
@@ -402,6 +542,7 @@ export const siteDiaryRouter = router({
       }
       await rawQuery(`DELETE FROM site_diary_photos WHERE diaryEntryId = ?`, [input.id]);
       await rawQuery(`DELETE FROM site_diary_labor_entries WHERE diaryEntryId = ?`, [input.id]);
+      await rawQuery(`DELETE FROM site_diary_worker_days WHERE diaryEntryId = ?`, [input.id]);
       await rawQuery(`DELETE FROM site_diary_entries WHERE id = ?`, [input.id]);
 
       return { success: true };
@@ -437,6 +578,19 @@ export const fieldDiaryRouter = router({
       [ctx.fieldUser.id]
     );
   }),
+
+  // Funcionários ativos do dono da obra (o mestre só marca quem esteve presente).
+  listWorkers: fieldProcedure
+    .input(z.object({ budgetId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      await assertFieldBudgetAccess(ctx.fieldUser.id, input.budgetId);
+      return rawQuery(
+        `SELECT w.id, w.name, w.role FROM site_workers w
+         JOIN budgets b ON b.userId = w.userId
+         WHERE b.id = ? AND w.active = 1 ORDER BY w.name ASC`,
+        [input.budgetId]
+      );
+    }),
 
   listStages: fieldProcedure
     .input(z.object({ budgetId: z.number().int() }))
