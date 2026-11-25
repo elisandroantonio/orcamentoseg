@@ -1275,6 +1275,18 @@ export default function BudgetForm() {
       return;
     }
     
+    // Orçamento ainda não salvo: editar etapa local existente = só renomear (não criar outra)
+    if ((!budgetId || isNaN(budgetId)) && editingStage) {
+      setLocalStages(localStages.map(s =>
+        s.id === editingStage.id
+          ? { ...s, name: stageName, description: stageDescription || null, updatedAt: new Date() }
+          : s
+      ));
+      toast.success("Etapa atualizada!");
+      closeStageDialog();
+      return;
+    }
+
     // Criar etapa localmente se orçamento ainda não foi salvo
     if (!budgetId || isNaN(budgetId)) {
       // Criar etapa local (sem salvar no banco)
