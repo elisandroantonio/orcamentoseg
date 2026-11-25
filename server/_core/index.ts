@@ -77,6 +77,19 @@ async function runSafeMigrations() {
       await rawQuery(`ALTER TABLE additive_measurements ADD COLUMN IF NOT EXISTS periodId INT NOT NULL DEFAULT 0`);
       console.log('[Migration] periodId column ensured in additive_measurements');
     } catch (_) { /* já existe */ }
+    // Coluna legada `period` (YYYY-MM): se existir como NOT NULL sem default, o INSERT novo falha
+    // ("Field 'period' doesn't have a default value"). Torna a coluna opcional.
+    try {
+      const legacy: any = await rawQuery(
+        `SELECT COLUMN_TYPE AS t, IS_NULLABLE AS n FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'additive_measurements' AND COLUMN_NAME = 'period'`
+      );
+      const row = Array.isArray(legacy) ? legacy[0] : undefined;
+      if (row && String(row.n).toUpperCase() === 'NO') {
+        await rawQuery(`ALTER TABLE additive_measurements MODIFY COLUMN period ${row.t} NULL DEFAULT NULL`);
+        console.log('[Migration] additive_measurements.period agora é opcional');
+      }
+    } catch (e) { console.error('[Migration] period legado em additive_measurements:', e); }
 
     // Criar tabelas do módulo Lista de Materiais
     await rawQuery(`CREATE TABLE IF NOT EXISTS material_lists (

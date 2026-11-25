@@ -741,6 +741,15 @@ function AdditiveMeasurementTab({
     return accumMap;
   }, [allHistoricalMeasurements, periods, selectedPeriodId]);
 
+  // Valor medido no período de um item, em tempo real: usa o % digitado (editingValues)
+  // e, se não houver edição, o % salvo.
+  const liveMeasuredValue = useCallback((item: any): number => {
+    const m = measurementMap[item.id];
+    const pctStr = editingValues[item.id] ?? (m?.measuredPercent != null ? String(m.measuredPercent) : "0");
+    const pct = Math.min(100, Math.max(0, Number(String(pctStr).replace(",", ".")) || 0));
+    return calcAdditiveItemTotal(item) * pct / 100;
+  }, [measurementMap, editingValues, calcAdditiveItemTotal]);
+
   // Totais do aditivo
   const additiveTotals = useMemo(() => {
     let totalContrato = 0;
@@ -757,13 +766,13 @@ function AdditiveMeasurementTab({
     allItems.forEach(item => {
       const total = calcAdditiveItemTotal(item);
       totalContrato += total;
-      const m = measurementMap[item.id];
-      if (m) totalMedidoPeriodo += Number(m.measuredValue);
+      // Valor do período em tempo real (usa o % digitado, ainda não salvo)
+      totalMedidoPeriodo += liveMeasuredValue(item);
       totalMedidoAcumulado += (historicalAccumMap[item.id] || 0);
     });
     totalMedidoAcumulado += totalMedidoPeriodo;
     return { totalContrato, totalMedidoPeriodo, totalMedidoAcumulado };
-  }, [additiveStages, calcAdditiveItemTotal, measurementMap, historicalAccumMap]);
+  }, [additiveStages, calcAdditiveItemTotal, liveMeasuredValue, historicalAccumMap]);
 
   const handlePercentChange = (itemId: number, value: string) => {
     setEditingValues(prev => ({ ...prev, [itemId]: value }));
@@ -875,13 +884,18 @@ function AdditiveMeasurementTab({
   const renderAdditiveStage = (stage: any, stageIndex: number, depth = 0): React.ReactElement[] => {
     const isExpanded = expandedStages.has(stage.id);
     const prefix = `${stageIndex + 1}`;
-    const stageTotalWithBdi = (stage.items || []).reduce((acc: number, item: any) => acc + calcAdditiveItemTotal(item), 0)
-      + (stage.children || []).reduce((acc: number, sub: any) => acc + (sub.items || []).reduce((a: number, item: any) => a + calcAdditiveItemTotal(item), 0), 0);
+    // Todos os itens da etapa, incluindo sub-etapas em qualquer nível
+    const stageAllItems: any[] = [];
+    const gather = (s: any) => {
+      (s.items || []).forEach((it: any) => stageAllItems.push(it));
+      (s.children || []).forEach(gather);
+    };
+    gather(stage);
+    const stageTotalWithBdi = stageAllItems.reduce((acc: number, item: any) => acc + calcAdditiveItemTotal(item), 0);
     let stageMedido = 0;
     let stageAccum = 0;
-    (stage.items || []).forEach((item: any) => {
-      const m = measurementMap[item.id];
-      if (m) stageMedido += Number(m.measuredValue);
+    stageAllItems.forEach((item: any) => {
+      stageMedido += liveMeasuredValue(item);
       stageAccum += (historicalAccumMap[item.id] || 0);
     });
     const stageAcumulado = stageAccum + stageMedido;
