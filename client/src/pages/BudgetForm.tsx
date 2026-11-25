@@ -1343,6 +1343,21 @@ export default function BudgetForm() {
       return;
     }
     
+    // Etapa local (orçamento ainda não salvo): não existe no banco, remove só da tela
+    if (localStages.some((s: any) => s.id === stageId)) {
+      const toRemove = new Set<number>([stageId]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const s of localStages) {
+          if (s.parentStageId && toRemove.has(s.parentStageId) && !toRemove.has(s.id)) { toRemove.add(s.id); grew = true; }
+        }
+      }
+      setLocalStages(localStages.filter((s: any) => !toRemove.has(s.id)));
+      toast.success("Etapa excluída com sucesso");
+      return;
+    }
+
     try {
       await deleteStageMutation.mutateAsync({ id: stageId });
       toast.success("Etapa excluída com sucesso");
