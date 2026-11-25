@@ -240,11 +240,12 @@ export const additivesRouter = router({
       await assertBudgetOwner(input.budgetId, ctx.user.id);
       const g = (r: any, k: string) => r?.[k] ?? r?.[k.toLowerCase()];
       const add: any[] = await rawQuery(
-        `SELECT id, totalCostWithBdi FROM budget_additives WHERE budgetId = ? AND status = 'aprovado'`,
+        `SELECT * FROM budget_additives WHERE budgetId = ? AND status = 'aprovado'`,
         [input.budgetId]
       );
       const approvedTotal = add.reduce((a, x) => a + Number(g(x, "totalCostWithBdi") || 0), 0);
       let measuredTotal = 0;
+      let byPeriod: { periodId: number; value: number }[] = [];
       if (add.length) {
         const ids = add.map((x) => Number(g(x, "id")));
         const am: any[] = await rawQuery(
@@ -252,8 +253,22 @@ export const additivesRouter = router({
           ids
         );
         measuredTotal = Number(g(am[0], "v") || 0);
+        const bp: any[] = await rawQuery(
+          `SELECT periodId, COALESCE(SUM(measuredValue),0) AS v FROM additive_measurements WHERE additiveId IN (${ids.map(() => "?").join(",")}) GROUP BY periodId`,
+          ids
+        );
+        byPeriod = bp.map((r) => ({ periodId: Number(g(r, "periodId")), value: Number(g(r, "v") || 0) }));
       }
-      return { approvedTotal, measuredTotal, count: add.length };
+      // Data de referência da aprovação (estimativa): congelamento > última alteração > criação
+      const items = add.map((x) => {
+        const d = g(x, "frozenAt") || g(x, "updatedAt") || g(x, "createdAt");
+        return {
+          id: Number(g(x, "id")),
+          total: Number(g(x, "totalCostWithBdi") || 0),
+          approvedAt: d ? new Date(d).toISOString() : null,
+        };
+      });
+      return { approvedTotal, measuredTotal, count: add.length, byPeriod, items };
     }),
 
   // ── CRUD de Aditivos ──────────────────────────────────────────────────────

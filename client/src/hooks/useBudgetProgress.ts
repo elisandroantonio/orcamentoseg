@@ -156,6 +156,11 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
     { enabled: !!budgetId }
   );
 
+  const { data: additivesData } = trpc.additives.progressSummary.useQuery(
+    { budgetId },
+    { enabled: !!budgetId }
+  );
+
   return useMemo(() => {
     // Etapa "agendada" = tem datas próprias OU herda as datas da etapa-mãe mais
     // próxima que tenha (sub-etapa sem data não some do gráfico).
@@ -230,12 +235,22 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
       ownTotalByStage.set(stage.id, own);
     });
 
-    const totalBudgetDated = Array.from(ownTotalByStage.values()).reduce((a, b) => a + b, 0);
-    if (totalBudgetDated <= 0) return null;
+    const originalDated = Array.from(ownTotalByStage.values()).reduce((a, b) => a + b, 0);
+    if (originalDated <= 0) return null;
+    // Aditivos aprovados entram no total do gráfico (contrato + aditivos)
+    const additiveItems: { total: number; start: Date }[] = ((additivesData as any)?.items || [])
+      .filter((a: any) => a.total > 0)
+      .map((a: any) => ({ total: Number(a.total), start: a.approvedAt ? new Date(a.approvedAt) : new Date() }));
+    const additivesTotal = additiveItems.reduce((s, a) => s + a.total, 0);
+    const totalBudgetDated = originalDated + additivesTotal;
+    const additiveByPeriod: Record<number, number> = {};
+    ((additivesData as any)?.byPeriod || []).forEach((r: any) => { additiveByPeriod[r.periodId] = r.value; });
+    const scheduleEnd = new Date(Math.max(...scheduled.map((x) => x.dates.end.getTime())));
 
     const sortedPeriods = [...(measurementPeriodsForChart as any[])].sort((a, b) => a.periodNumber - b.periodNumber);
     const itemAccumPercent: Record<number, number> = {};
     const measuredSnapshots: { date: Date; value: number }[] = [];
+    let additiveAccum = 0;
     sortedPeriods.forEach((p: any) => {
       (allMeasuredItemsForChart as any[])
         .filter((mi: any) => mi.periodId === p.id)
@@ -247,6 +262,8 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
         const pct = itemAccumPercent[item.id] || 0;
         value += (itemTotalWithBdiLocal(item) * pct) / 100;
       });
+      additiveAccum += additiveByPeriod[p.id] || 0;
+      value += additiveAccum;
       // Sem data no período: considera "hoje" (medição salva conta mesmo assim)
       const periodDate = p.endDate || p.startDate;
       measuredSnapshots.push({ date: periodDate ? new Date(periodDate) : new Date(), value });
@@ -273,6 +290,16 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
           frac = Math.min(1, Math.max(0, (d.getTime() - start.getTime()) / (end.getTime() - start.getTime())));
         }
         value += total * frac;
+      });
+      // Aditivos: planejado linear (estimativa) da data de aprovação até o fim do cronograma
+      additiveItems.forEach((a) => {
+        let frac: number;
+        if (scheduleEnd <= a.start) {
+          frac = d >= a.start ? 1 : 0;
+        } else {
+          frac = Math.min(1, Math.max(0, (d.getTime() - a.start.getTime()) / (scheduleEnd.getTime() - a.start.getTime())));
+        }
+        value += a.total * frac;
       });
       return value;
     };
@@ -321,7 +348,7 @@ export function useAvancoFisico(budgetId: number, stages: any[], budget: any): A
       deltaPercent,
       deltaValue: (deltaPercent / 100) * totalBudgetDated,
     };
-  }, [stages, budget, measurementPeriodsForChart, allMeasuredItemsForChart, bdiConfigsRaw]);
+  }, [stages, budget, measurementPeriodsForChart, allMeasuredItemsForChart, bdiConfigsRaw, additivesData]);
 }
 
 // Aditivos aprovados: total contratado e valor já medido (todos os períodos).

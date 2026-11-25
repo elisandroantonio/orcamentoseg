@@ -2027,7 +2027,7 @@ export default function BudgetGantt({ stageTotalsWithBdi }: BudgetGanttProps = {
         <CardHeader>
           <CardTitle>Avanço Físico: Planejado x Realizado</CardTitle>
           <CardDescription>
-            Planejado calculado pelas datas das etapas no Gantt; Realizado vem das medições salvas (aba Medições)
+            Planejado calculado pelas datas das etapas no Gantt (aditivos aprovados distribuídos linearmente da aprovação até o fim da obra); Realizado vem das medições salvas (aba Medições, incluindo aditivos)
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
