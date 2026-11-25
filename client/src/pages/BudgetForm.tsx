@@ -4353,7 +4353,8 @@ export default function BudgetForm() {
                     setCompositionQuantity("1");
                     setSelectedCompositeItemId(null);
                   } catch (error) {
-                    toast.error("Erro ao adicionar composição");
+                    const msg = error instanceof Error ? error.message : String(error);
+                    toast.error(`Erro ao adicionar composição: ${msg}`);
                     console.error(error);
                   }
                 }}
